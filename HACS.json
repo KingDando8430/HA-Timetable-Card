@@ -1,0 +1,9 @@
+{
+  "name": "Timetable Card",
+  "description": "A Home Assistant Lovelace card that displays calendar events as a weekly timetable grid with keyword coloring, overlap layout, and a polished settings UI.",
+  "category": "plugin",
+  "render_readme": true,
+  "content_in_root": true,
+  "filename": "timetable-card.js",
+  "homeassistant": "2023.4.0"
+}
