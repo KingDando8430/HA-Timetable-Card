@@ -113,6 +113,15 @@ keywords:
 
 ---
 
+## Screenshots
+
+<img src="https://raw.githubusercontent.com/KingDando8430/HA-Timetable-Card/main/assets/card-light.jpeg">
+<img src="https://raw.githubusercontent.com/KingDando8430/HA-Timetable-Card/main/assets/card-dark.jpeg">
+
+> Timetable Card v1.1.0
+
+---
+
 ## File Structure
 
 ```
