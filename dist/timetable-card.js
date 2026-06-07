@@ -1,38 +1,56 @@
 // ═══════════════════════════════════════════════════════════════════
 // Home Assistant Timetable Card
 // Author: KingDando8430
-// https://github.com/KingDando8430/ha-timetable-card
-// Version: 1.0.0
+// https://github.com/KingDando8430/timetable-card
+// Version: 1.1.0
 // ═══════════════════════════════════════════════════════════════════
 
-const TC_VERSION = '1.0.0';
+const TC_VERSION = '1.1.0';
 
 window.customCards = window.customCards || [];
 window.customCards.push({
   type: 'timetable-card',
   name: 'Timetable Card',
-  description: 'Wochenansicht für Kalender-Entitäten',
+  description: 'Weekly timetable view for calendar entities',
   preview: true,
   documentationURL: 'https://github.com/KingDando8430/timetable-card',
 });
 
+// ─── Translation loader ───────────────────────────────────────────
+const TC_STRINGS_CACHE = {};
+const TC_STRINGS_FALLBACK = 'en';
+
+async function tcLoadStrings(lang) {
+  if (TC_STRINGS_CACHE[lang]) return TC_STRINGS_CACHE[lang];
+  const base = new URL(import.meta.url).pathname.replace(/\/[^/]+$/, '');
+  try {
+    const res = await fetch(`${base}/translations/${lang}.json`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    TC_STRINGS_CACHE[lang] = await res.json();
+    return TC_STRINGS_CACHE[lang];
+  } catch {
+    if (lang !== TC_STRINGS_FALLBACK) return tcLoadStrings(TC_STRINGS_FALLBACK);
+    return null;
+  }
+}
+
+// Synchronous accessor – returns cached strings or fallback (en) if not yet loaded.
+// Components call tcLoadStrings() on init and re-render once the promise resolves.
+function tcS(hass) {
+  const lang = hass?.locale?.language || hass?.language || TC_STRINGS_FALLBACK;
+  return TC_STRINGS_CACHE[lang] || TC_STRINGS_CACHE[TC_STRINGS_FALLBACK] || {};
+}
+
 // ─── Constants ──────────────────────────────────────────────────────
-const TC_DAYS = [
-  { key: 'monday',    short: 'Mo', long: 'Montag'     },
-  { key: 'tuesday',   short: 'Di', long: 'Dienstag'   },
-  { key: 'wednesday', short: 'Mi', long: 'Mittwoch'   },
-  { key: 'thursday',  short: 'Do', long: 'Donnerstag' },
-  { key: 'friday',    short: 'Fr', long: 'Freitag'    },
-  { key: 'saturday',  short: 'Sa', long: 'Samstag'    },
-  { key: 'sunday',    short: 'So', long: 'Sonntag'    },
-];
-const TC_MONTHS = ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];
+// Day order (0 = Monday … 6 = Sunday); keys are language-neutral
+const TC_DAY_KEYS = ['monday','tuesday','wednesday','thursday','friday','saturday','sunday'];
+
 const TIME_W     = 50;
 const PADDING_TOP = 12;
 const PADDING_BOT = 20;
 
 const TC_DEFAULT = {
-  entities: [],              // [{id, color}] or legacy [string]
+  entities: [],
   time_position: 'left',
   show_location: true,
   show_notes: true,
@@ -56,7 +74,6 @@ function tcRgb(hex) {
   if (f.length !== 6) return null;
   return { r:parseInt(f.slice(0,2),16), g:parseInt(f.slice(2,4),16), b:parseInt(f.slice(4,6),16) };
 }
-// Normalize entity list → [{id:string, color:string|null}]
 function tcNormalizeEntities(raw) {
   if (!Array.isArray(raw)) return [];
   return raw.map(e => typeof e === 'string' ? { id: e, color: null } : e);
@@ -84,7 +101,10 @@ class TimetableCardEditor extends HTMLElement {
   set hass(h) {
     this._hass = h;
     if (this._pickerEl) this._pickerEl.hass = h;
-    if (!this._rendered) this._render();
+    if (!this._rendered) {
+      const lang = h?.locale?.language || h?.language || TC_STRINGS_FALLBACK;
+      tcLoadStrings(lang).then(() => this._render());
+    }
   }
 
   _dispatch(cfg) {
@@ -120,22 +140,23 @@ class TimetableCardEditor extends HTMLElement {
   _renderEntityList() {
     const el = this.shadowRoot.getElementById('entity-list');
     if (!el) return;
+    const t    = tcS(this._hass);
     const ents = this._getEntities();
     el.innerHTML = ents.length
       ? ents.map(e => `
         <div class="ent-row" data-id="${tcEsc(e.id)}">
           <span class="ent-icon">📅</span>
           <span class="ent-id">${tcEsc(e.id)}</span>
-          <div class="swatch${e.color?'':' no-col'}" style="background:${e.color||'transparent'}" title="Kalenderfarbe">
+          <div class="swatch${e.color?'':' no-col'}" style="background:${e.color||'transparent'}" title="${t.ent_color_title}">
             <input type="color" class="cpick ent-cpick" value="${e.color||'#03a9f4'}" data-id="${tcEsc(e.id)}" />
           </div>
-          <button class="rm-btn ent-rm" data-id="${tcEsc(e.id)}" title="Entfernen">
+          <button class="rm-btn ent-rm" data-id="${tcEsc(e.id)}" title="${t.ent_remove_title}">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
               <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
             </svg>
           </button>
         </div>`).join('')
-      : `<p class="hint">Noch kein Kalender hinzugefügt.</p>`;
+      : `<p class="hint">${t.ent_hint}</p>`;
 
     el.querySelectorAll('.ent-rm').forEach(b => b.addEventListener('click', () => this._removeEntity(b.dataset.id)));
     el.querySelectorAll('.ent-cpick').forEach(inp => {
@@ -155,22 +176,22 @@ class TimetableCardEditor extends HTMLElement {
       color_mode: 'block', hidden: false, rename: ''
     }]);
   }
-  _rmKw(i)     { const a = [...(this._config.keywords||[])]; a.splice(i,1); this._set('keywords', a); }
-  _setKw(i,k,v){ const a = [...(this._config.keywords||[])]; a[i] = { ...a[i], [k]: v }; this._set('keywords', a); }
+  _rmKw(i)      { const a = [...(this._config.keywords||[])]; a.splice(i,1); this._set('keywords', a); }
+  _setKw(i,k,v) { const a = [...(this._config.keywords||[])]; a[i] = { ...a[i], [k]: v }; this._set('keywords', a); }
 
   _renderKwList() {
     const el = this.shadowRoot.getElementById('kw-list');
     if (!el) return;
+    const t   = tcS(this._hass);
     const kws = this._config.keywords || [];
     if (!kws.length) {
-      el.innerHTML = `<p class="hint">Keine Schlüsselwörter konfiguriert.</p>`;
+      el.innerHTML = `<p class="hint">${t.kw_hint}</p>`;
       return;
     }
     el.innerHTML = kws.map((kw, i) => `
       <div class="kw-card">
-        <!-- Row 1: keyword + color + delete -->
         <div class="kw-r1">
-          <input class="kw-in" placeholder="Schlüsselwort…" value="${tcEsc(kw.keyword||'')}" data-i="${i}" />
+          <input class="kw-in" placeholder="${t.kw_placeholder}" value="${tcEsc(kw.keyword||'')}" data-i="${i}" />
           <div class="swatch${kw.color?'':' no-col'}" style="background:${kw.color||'#4CAF50'}">
             <input type="color" class="cpick kw-cpick" value="${kw.color||'#4CAF50'}" data-i="${i}" />
           </div>
@@ -180,29 +201,26 @@ class TimetableCardEditor extends HTMLElement {
             </svg>
           </button>
         </div>
-        <!-- Row 2: options pills -->
         <div class="kw-r2">
           <label class="kw-pill">
             <input type="checkbox" class="kw-chk" data-i="${i}" data-k="exact_match" ${kw.exact_match!==false?'checked':''} />
-            <span>Exakt</span>
+            <span>${t.kw_exact}</span>
           </label>
           <label class="kw-pill">
             <input type="checkbox" class="kw-chk" data-i="${i}" data-k="hidden" ${kw.hidden?'checked':''} />
-            <span>Ausblenden</span>
+            <span>${t.kw_hide}</span>
           </label>
           <div class="kw-seg">
-            <button class="seg-sm${(kw.color_mode||'block')==='block'?' on':''}" data-i="${i}" data-v="block">Block</button>
-            <button class="seg-sm${kw.color_mode==='border'?' on':''}" data-i="${i}" data-v="border">Rand</button>
+            <button class="seg-sm${(kw.color_mode||'block')==='block'?' on':''}" data-i="${i}" data-v="block">${t.kw_block}</button>
+            <button class="seg-sm${kw.color_mode==='border'?' on':''}" data-i="${i}" data-v="border">${t.kw_border}</button>
           </div>
         </div>
-        <!-- Row 3: rename -->
         <div class="kw-r3">
-          <span class="kw-rlbl">Umbenennen</span>
-          <input class="kw-rename" placeholder="Leer = kein Umbenennen" value="${tcEsc(kw.rename||'')}" data-i="${i}" />
+          <span class="kw-rlbl">${t.kw_rename_label}</span>
+          <input class="kw-rename" placeholder="${t.kw_rename_ph}" value="${tcEsc(kw.rename||'')}" data-i="${i}" />
         </div>
       </div>`).join('');
 
-    // Bind
     el.querySelectorAll('.kw-in').forEach(e => {
       e.addEventListener('change', ev => this._setKw(+e.dataset.i, 'keyword', ev.target.value));
     });
@@ -232,13 +250,14 @@ class TimetableCardEditor extends HTMLElement {
   _renderWeekdays() {
     const el = this.shadowRoot.getElementById('wd-row');
     if (!el) return;
-    const active = this._config.weekdays || TC_DAYS.map((_, i) => i);
-    el.innerHTML = TC_DAYS.map((d, i) =>
+    const t      = tcS(this._hass);
+    const active = this._config.weekdays || TC_DAY_KEYS.map((_, i) => i);
+    el.innerHTML = t.days.map((d, i) =>
       `<button class="wd-pill${active.includes(i)?' on':''}" data-i="${i}">${d.short}</button>`
     ).join('');
     el.querySelectorAll('.wd-pill').forEach(b => {
       b.addEventListener('click', () => {
-        let wd = [...(this._config.weekdays || TC_DAYS.map((_, j) => j))];
+        let wd = [...(this._config.weekdays || TC_DAY_KEYS.map((_, j) => j))];
         const i = +b.dataset.i;
         if (wd.includes(i)) { if (wd.length > 1) wd = wd.filter(x => x !== i); }
         else wd = [...wd, i].sort((a, b) => a - b);
@@ -250,55 +269,44 @@ class TimetableCardEditor extends HTMLElement {
   // ── Full render ──────────────────────────────────────────────────
   _render() {
     this._rendered = true;
-    const c = this._config;
+    const c   = this._config;
+    const t   = tcS(this._hass);
     const ppm = c.px_per_min || 3.6;
 
     this.shadowRoot.innerHTML = `
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :host{display:block;font-family:-apple-system,BlinkMacSystemFont,'Roboto',sans-serif;color:var(--primary-text-color);padding-bottom:12px}
-
 .sec{font-size:11px;font-weight:700;letter-spacing:.85px;text-transform:uppercase;color:var(--secondary-text-color);opacity:.68;margin:22px 2px 7px;display:block}
 .sec:first-of-type{margin-top:6px}
-
 .box{background:var(--secondary-background-color,rgba(120,120,128,.09));border-radius:13px;overflow:hidden}
-
 .row{display:flex;align-items:center;gap:12px;min-height:47px;padding:9px 15px;border-bottom:1px solid var(--divider-color,rgba(0,0,0,.06))}
 .row:last-child{border-bottom:none}
 .rl{flex:1;font-size:14.5px;line-height:1.3}
 .rs{font-size:11.5px;color:var(--secondary-text-color);margin-top:2px}
-
 .seg{display:flex;background:var(--secondary-background-color,rgba(120,120,128,.15));border-radius:9px;padding:2px;gap:1px}
 .seg-o{padding:5px 14px;border-radius:7px;border:none;background:none;font-size:13px;font-weight:500;cursor:pointer;color:var(--secondary-text-color);font-family:inherit;transition:all .14s;white-space:nowrap}
 .seg-o.on{background:var(--card-background-color,#fff);color:var(--primary-text-color);box-shadow:0 1px 4px rgba(0,0,0,.13)}
-
 select.pick{background:var(--secondary-background-color,rgba(0,0,0,.04));border:1px solid var(--divider-color,rgba(0,0,0,.12));border-radius:9px;padding:6px 10px;color:var(--primary-text-color);font-size:13px;cursor:pointer;outline:none;font-family:inherit;min-width:130px}
-
 input[type=number].num-in{background:var(--secondary-background-color,rgba(0,0,0,.04));border:1px solid var(--divider-color,rgba(0,0,0,.12));border-radius:9px;padding:6px 10px;color:var(--primary-text-color);font-size:13px;outline:none;font-family:inherit;width:90px;text-align:right}
 input[type=number].num-in:focus{border-color:var(--primary-color,#03a9f4)}
-
 ha-switch{flex-shrink:0}
-
 #wd-row{display:flex;flex-wrap:wrap;gap:6px;padding:10px 15px 12px}
 .wd-pill{padding:5px 10px;border-radius:20px;border:1.5px solid var(--divider-color,rgba(0,0,0,.16));background:none;color:var(--secondary-text-color);font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .15s}
 .wd-pill.on{background:var(--primary-color,#03a9f4);border-color:var(--primary-color,#03a9f4);color:#fff}
-
-/* Entity list */
 #entity-list{padding:2px 15px 4px}
 .ent-row{display:flex;align-items:center;gap:9px;padding:9px 0;border-bottom:1px solid var(--divider-color,rgba(0,0,0,.05))}
 .ent-row:last-child{border-bottom:none}
 .ent-icon{font-size:16px;line-height:1;flex-shrink:0}
 .ent-id{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13.5px;opacity:.85}
 .picker-wrap{padding:6px 15px 10px;border-top:1px solid var(--divider-color,rgba(0,0,0,.06))}
-
-/* Keyword cards */
 #kw-list{padding:6px 15px 2px;display:flex;flex-direction:column;gap:10px}
 .kw-card{background:var(--card-background-color,rgba(255,255,255,.6));border-radius:10px;overflow:hidden;border:1px solid var(--divider-color,rgba(0,0,0,.09))}
 .kw-r1{display:flex;align-items:center;gap:8px;padding:9px 10px 8px}
 .kw-in{flex:1;min-width:0;border:1px solid var(--divider-color,rgba(0,0,0,.14));border-radius:8px;background:var(--secondary-background-color,rgba(0,0,0,.03));padding:6px 10px;font-size:13.5px;color:var(--primary-text-color);outline:none;font-family:inherit}
 .kw-in:focus{border-color:var(--primary-color,#03a9f4)}
 .kw-r2{display:flex;align-items:center;gap:8px;padding:0 10px 8px;flex-wrap:wrap}
-.kw-r3{display:flex;align-items:center;gap:8px;padding:0 10px 9px;border-top:1px solid var(--divider-color,rgba(0,0,0,.06));padding-top:8px}
+.kw-r3{display:flex;align-items:center;gap:8px;padding:8px 10px 9px;border-top:1px solid var(--divider-color,rgba(0,0,0,.06))}
 .kw-rlbl{font-size:11px;font-weight:600;color:var(--secondary-text-color);opacity:.7;white-space:nowrap;flex-shrink:0}
 .kw-rename{flex:1;min-width:0;border:1px solid var(--divider-color,rgba(0,0,0,.14));border-radius:8px;background:var(--secondary-background-color,rgba(0,0,0,.03));padding:5px 9px;font-size:13px;color:var(--primary-text-color);outline:none;font-family:inherit}
 .kw-rename:focus{border-color:var(--primary-color,#03a9f4)}
@@ -308,107 +316,96 @@ ha-switch{flex-shrink:0}
 .kw-seg{display:flex;background:var(--secondary-background-color,rgba(120,120,128,.14));border-radius:8px;padding:2px;gap:1px;margin-left:auto}
 .seg-sm{padding:3px 10px;border-radius:6px;border:none;background:none;font-size:11.5px;font-weight:500;cursor:pointer;color:var(--secondary-text-color);font-family:inherit;transition:all .14s;white-space:nowrap}
 .seg-sm.on{background:var(--card-background-color,#fff);color:var(--primary-text-color);box-shadow:0 1px 3px rgba(0,0,0,.12)}
-
 .kw-footer{padding:8px 15px 10px;border-top:1px solid var(--divider-color,rgba(0,0,0,.06))}
-
-/* Color swatch */
 .swatch{width:28px;height:28px;border-radius:7px;border:1.5px solid rgba(0,0,0,.14);overflow:hidden;position:relative;flex-shrink:0;cursor:pointer}
 .swatch.no-col{background:repeating-conic-gradient(rgba(0,0,0,.07) 0% 25%, transparent 0% 50%) 0 0/8px 8px !important;border-style:dashed}
-.cpick{position:absolute;inset:-6px;width:calc(100%+12px);height:calc(100%+12px);opacity:0;cursor:pointer}
-
+.cpick{position:absolute;inset:-6px;width:calc(100% + 12px);height:calc(100% + 12px);opacity:0;cursor:pointer}
 .ghost{display:inline-flex;align-items:center;gap:6px;padding:7px 15px;background:none;border:1.5px solid var(--primary-color,#03a9f4);border-radius:20px;color:var(--primary-color,#03a9f4);font-size:13px;font-weight:500;cursor:pointer;font-family:inherit;transition:background .15s}
 .ghost:hover{background:rgba(var(--rgb-primary-color,3,169,244),.09)}
-
 .rm-btn{background:none;border:none;cursor:pointer;color:var(--secondary-text-color);padding:5px;border-radius:6px;display:flex;align-items:center;opacity:.4;transition:opacity .15s,color .15s;flex-shrink:0}
 .rm-btn:hover{opacity:1;color:var(--error-color,#f44336)}
 .hint{font-size:13px;color:var(--secondary-text-color);padding:10px 0;opacity:.65;font-style:italic}
 </style>
 
-<!-- KALENDER -->
-<span class="sec">Kalender</span>
+<span class="sec">${t.sec_calendar}</span>
 <div class="box">
   <div id="entity-list"></div>
   <div class="picker-wrap" id="picker-wrap"></div>
 </div>
 
-<!-- SCHLÜSSELWÖRTER -->
-<span class="sec">Schlüsselwörter</span>
+<span class="sec">${t.sec_keywords}</span>
 <div class="box">
   <div id="kw-list"></div>
   <div class="kw-footer">
     <button class="ghost" id="add-kw">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
-      Schlüsselwort hinzufügen
+      ${t.kw_add}
     </button>
   </div>
 </div>
 
-<!-- ANZEIGE -->
-<span class="sec">Anzeige</span>
+<span class="sec">${t.sec_display}</span>
 <div class="box">
   <div class="row" style="flex-direction:column;align-items:flex-start;padding-bottom:0">
-    <div class="rl">Wochentage</div>
+    <div class="rl">${t.disp_weekdays}</div>
     <div id="wd-row"></div>
   </div>
   <div class="row">
-    <div><div class="rl">Ort anzeigen</div><div class="rs">Ort unter dem Titel</div></div>
+    <div><div class="rl">${t.disp_loc}</div><div class="rs">${t.disp_loc_sub}</div></div>
     <ha-switch id="sw-loc" ${c.show_location!==false?'checked':''}></ha-switch>
   </div>
   <div class="row">
-    <div><div class="rl">Notizen anzeigen</div><div class="rs">Beschreibung als 3. Zeile</div></div>
+    <div><div class="rl">${t.disp_notes}</div><div class="rs">${t.disp_notes_sub}</div></div>
     <ha-switch id="sw-notes" ${c.show_notes!==false?'checked':''}></ha-switch>
   </div>
 </div>
 
-<!-- DESIGN -->
-<span class="sec">Design</span>
+<span class="sec">${t.sec_design}</span>
 <div class="box">
   <div class="row">
-    <div class="rl">Zeitachse</div>
+    <div class="rl">${t.des_axis}</div>
     <div class="seg">
-      <button class="seg-o${(c.time_position||'left')==='left'?' on':''}" data-v="left">Links</button>
-      <button class="seg-o${c.time_position==='right'?' on':''}" data-v="right">Rechts</button>
+      <button class="seg-o${(c.time_position||'left')==='left'?' on':''}" data-v="left">${t.des_left}</button>
+      <button class="seg-o${c.time_position==='right'?' on':''}" data-v="right">${t.des_right}</button>
     </div>
   </div>
   <div class="row">
-    <div><div class="rl">Zeitintervall</div><div class="rs">Rastermarkierungen</div></div>
+    <div><div class="rl">${t.des_interval}</div><div class="rs">${t.des_interval_sub}</div></div>
     <select class="pick" id="time-int">
-      <option value="event_based" ${(c.time_interval||'event_based')==='event_based'?'selected':''}>Ereignisbasiert</option>
+      <option value="event_based" ${(c.time_interval||'event_based')==='event_based'?'selected':''}>${t.des_interval_event}</option>
       <option value="15"  ${c.time_interval==='15'?'selected':''}>15 min</option>
       <option value="30"  ${c.time_interval==='30'?'selected':''}>30 min</option>
       <option value="60"  ${c.time_interval==='60'?'selected':''}>60 min</option>
     </select>
   </div>
   <div class="row">
-    <div><div class="rl">Pixel pro Minute</div><div class="rs">Höhe eines Ereignisses (px/min)</div></div>
+    <div><div class="rl">${t.des_ppm}</div><div class="rs">${t.des_ppm_sub}</div></div>
     <input type="number" class="num-in" id="ppm-in" min="1" max="20" step="0.5" value="${ppm}" />
   </div>
 </div>
 
-<!-- AKTUALISIERUNG -->
-<span class="sec">Aktualisierung</span>
+<span class="sec">${t.sec_refresh}</span>
 <div class="box">
   <div class="row">
-    <div><div class="rl">Intervall</div><div class="rs">Wie oft der Kalender neu geladen wird</div></div>
+    <div><div class="rl">${t.ref_interval}</div><div class="rs">${t.ref_interval_sub}</div></div>
     <select class="pick" id="ref-int">
-      <option value="auto"  ${(c.refresh_interval||'auto')==='auto'?'selected':''}>Automatisch</option>
-      <option value="5"     ${c.refresh_interval==='5'?'selected':''}>5 Minuten</option>
-      <option value="10"    ${c.refresh_interval==='10'?'selected':''}>10 Minuten</option>
-      <option value="15"    ${c.refresh_interval==='15'?'selected':''}>15 Minuten</option>
-      <option value="30"    ${c.refresh_interval==='30'?'selected':''}>30 Minuten</option>
-      <option value="60"    ${c.refresh_interval==='60'?'selected':''}>1 Stunde</option>
-      <option value="120"   ${c.refresh_interval==='120'?'selected':''}>2 Stunden</option>
-      <option value="180"   ${c.refresh_interval==='180'?'selected':''}>3 Stunden</option>
-      <option value="360"   ${c.refresh_interval==='360'?'selected':''}>6 Stunden</option>
+      <option value="auto"  ${(c.refresh_interval||'auto')==='auto'?'selected':''}>${t.ref_auto}</option>
+      <option value="5"     ${c.refresh_interval==='5'?'selected':''}>${t.ref_5}</option>
+      <option value="10"    ${c.refresh_interval==='10'?'selected':''}>${t.ref_10}</option>
+      <option value="15"    ${c.refresh_interval==='15'?'selected':''}>${t.ref_15}</option>
+      <option value="30"    ${c.refresh_interval==='30'?'selected':''}>${t.ref_30}</option>
+      <option value="60"    ${c.refresh_interval==='60'?'selected':''}>${t.ref_60}</option>
+      <option value="120"   ${c.refresh_interval==='120'?'selected':''}>${t.ref_120}</option>
+      <option value="180"   ${c.refresh_interval==='180'?'selected':''}>${t.ref_180}</option>
+      <option value="360"   ${c.refresh_interval==='360'?'selected':''}>${t.ref_360}</option>
     </select>
   </div>
 </div>`;
 
-    // Entity picker
     if (this._hass) {
       this._pickerEl = document.createElement('ha-entity-picker');
       this._pickerEl.hass = this._hass;
-      this._pickerEl.label = '+ Kalender hinzufügen';
+      this._pickerEl.label = t.ent_picker_label;
       this._pickerEl.includeDomains = ['calendar'];
       this._pickerEl.allowCustomEntity = false;
       this._pickerEl.value = '';
@@ -445,7 +442,7 @@ class TimetableCard extends HTMLElement {
     this._loading = false;
     this._error   = null;
     this._hass    = null;
-    this._weekOffset = 0;
+    this._weekOffset   = 0;
     this._clockTimer   = null;
     this._refreshTimer = null;
     this._lastFetchKey = null;
@@ -477,7 +474,15 @@ class TimetableCard extends HTMLElement {
   set hass(h) {
     const first = !this._hass;
     this._hass = h;
-    if (first) { this._fetchEvents(); this._setupRefresh(); this._clockTimer = setInterval(() => this._render(), 30_000); }
+    if (first) {
+      const lang = h?.locale?.language || h?.language || TC_STRINGS_FALLBACK;
+      tcLoadStrings(lang).then(() => {
+        this._fetchEvents();
+        this._setupRefresh();
+        this._clockTimer = setInterval(() => this._render(), 30_000);
+        this._render();
+      });
+    }
   }
 
   disconnectedCallback() {
@@ -492,10 +497,8 @@ class TimetableCard extends HTMLElement {
     this._refreshTimer = setInterval(() => { this._lastFetchKey = null; this._fetchEvents(); }, mins * 60_000);
   }
 
-  // ── Entities ───────────────────────────────────────────────────
   _getEntities() { return tcNormalizeEntities(this._config.entities || []); }
 
-  // ── Week helpers ───────────────────────────────────────────────
   _weekRange() {
     const now = new Date();
     const monday = new Date(now);
@@ -508,13 +511,13 @@ class TimetableCard extends HTMLElement {
     return { monday, end };
   }
 
-  _weekDays() {
+  _weekDays(t) {
     const { monday } = this._weekRange();
-    const sel = this._config.weekdays || TC_DAYS.map((_, i) => i);
-    return TC_DAYS.map((d, i) => {
+    const sel = this._config.weekdays || TC_DAY_KEYS.map((_, i) => i);
+    return TC_DAY_KEYS.map((key, i) => {
       const date = new Date(monday);
       date.setDate(monday.getDate() + i);
-      return { ...d, idx: i, date, selected: sel.includes(i) };
+      return { key, short: t.days[i].short, idx: i, date, selected: sel.includes(i) };
     }).filter(d => d.selected);
   }
 
@@ -525,7 +528,6 @@ class TimetableCard extends HTMLElement {
     return Math.ceil(((u - y1) / 86_400_000 + 1) / 7);
   }
 
-  // ── Fetch ──────────────────────────────────────────────────────
   async _fetchEvents() {
     const ents = this._getEntities();
     if (!ents.length || !this._hass) return;
@@ -554,9 +556,8 @@ class TimetableCard extends HTMLElement {
     this._render();
   }
 
-  // ── Event helpers ──────────────────────────────────────────────
   _isAllDay(ev) { return !!(ev.start && ev.start.date && !ev.start.dateTime); }
-  _edt(ev, f)   {
+  _edt(ev, f) {
     const v = ev[f];
     return v ? (v.dateTime ? new Date(v.dateTime) : new Date(v.date)) : null;
   }
@@ -572,14 +573,11 @@ class TimetableCard extends HTMLElement {
   }
   _allDayOnDay(ev, day) {
     if (!this._isAllDay(ev)) return false;
-    const s  = new Date(ev.start.date);
-    const e  = new Date(ev.end.date);
+    const s = new Date(ev.start.date), e = new Date(ev.end.date);
     const d0 = new Date(day); d0.setHours(0,0,0,0);
-    const d1 = new Date(d0);  d1.setDate(d0.getDate()+1);
+    const d1 = new Date(d0); d1.setDate(d0.getDate()+1);
     return s < d1 && e > d0;
   }
-
-  // Returns first matching keyword rule (or null)
   _matchKw(ev) {
     const title = ev.summary || '';
     const desc  = (ev.description || '').replace(/<[^>]+>/g, '');
@@ -593,13 +591,10 @@ class TimetableCard extends HTMLElement {
     }
     return null;
   }
-
-  // Color from keyword rule (color_mode aware) or entity color
   _entityColor(ev) {
     const ent = this._getEntities().find(e => e.id === ev._entityId);
     return ent?.color || null;
   }
-
   _boundaries(timedEvs) {
     const set = new Set();
     timedEvs.forEach(ev => {
@@ -616,62 +611,35 @@ class TimetableCard extends HTMLElement {
     }
     return Array.from(set).sort((a,b) => a-b);
   }
-
-  // ── Overlap layout ─────────────────────────────────────────────
-  // Returns array of {ev, col, total} for each event in a day
   _layoutDay(evs) {
-    // Sort by start
-    const sorted = [...evs].sort((a, b) => {
-      const sa = this._edt(a,'start'), sb = this._edt(b,'start');
-      return (sa||0) - (sb||0);
-    });
-    const cols   = [];   // each col is array of events
-    const result = [];
-
+    const sorted = [...evs].sort((a, b) => (this._edt(a,'start')||0) - (this._edt(b,'start')||0));
+    const cols = [], result = [];
     for (const ev of sorted) {
       const s = this._edt(ev,'start'), e = this._edt(ev,'end');
       if (!s || !e) continue;
-
-      // Find first column where last event ends before this starts
       let placed = false;
       for (let ci = 0; ci < cols.length; ci++) {
-        const lastEv   = cols[ci][cols[ci].length - 1];
-        const lastEnd  = this._edt(lastEv, 'end');
-        if (lastEnd && lastEnd <= s) {
-          cols[ci].push(ev);
-          result.push({ ev, col: ci });
-          placed = true;
-          break;
-        }
+        const lastEnd = this._edt(cols[ci][cols[ci].length-1], 'end');
+        if (lastEnd && lastEnd <= s) { cols[ci].push(ev); result.push({ ev, col: ci }); placed = true; break; }
       }
-      if (!placed) {
-        result.push({ ev, col: cols.length });
-        cols.push([ev]);
-      }
+      if (!placed) { result.push({ ev, col: cols.length }); cols.push([ev]); }
     }
-
-    // Determine total concurrent columns for each event
-    // (how many columns overlap at its time slot)
     return result.map(item => {
       const s = this._edt(item.ev,'start'), e = this._edt(item.ev,'end');
       let total = 0;
-      for (let ci = 0; ci < cols.length; ci++) {
-        const overlaps = cols[ci].some(other => {
-          const os = this._edt(other,'start'), oe = this._edt(other,'end');
-          return os && oe && os < e && oe > s;
-        });
-        if (overlaps) total++;
+      for (const col of cols) {
+        if (col.some(o => { const os=this._edt(o,'start'),oe=this._edt(o,'end'); return os&&oe&&os<e&&oe>s; })) total++;
       }
       return { ...item, total };
     });
   }
 
-  // ── Main render ────────────────────────────────────────────────
   _render() {
-    const days     = this._weekDays();
+    const t        = tcS(this._hass);
+    const days     = this._weekDays(t);
     const { monday } = this._weekRange();
     const now      = new Date();
-    const kw       = this._weekNum(monday);
+    const weekNum  = this._weekNum(monday);
     const timeLeft = this._config.time_position !== 'right';
     const ppm      = parseFloat(this._config.px_per_min) || 3.6;
 
@@ -685,18 +653,13 @@ class TimetableCard extends HTMLElement {
     const bodyH  = bounds.length ? (maxT - minT) * ppm + PADDING_TOP + PADDING_BOT : 200;
 
     const byDay = days.map(day =>
-      timedEvs.filter(ev => {
-        const s = this._edt(ev,'start');
-        return s && s.toDateString() === day.date.toDateString();
-      })
+      timedEvs.filter(ev => { const s = this._edt(ev,'start'); return s && s.toDateString()===day.date.toDateString(); })
     );
 
-    // ── CSS ────────────────────────────────────────────────────────
     const css = `
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :host{display:block;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Roboto',sans-serif;-webkit-font-smoothing:antialiased}
 ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px)}
-
 .hdr{display:flex;align-items:center;gap:9px;padding:10px 13px 9px;border-bottom:1px solid var(--divider-color,rgba(0,0,0,.08));background:var(--card-background-color);z-index:10;user-select:none}
 .hdr-ico{width:31px;height:31px;border-radius:8px;background:var(--primary-color,#03a9f4);display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 2px 6px rgba(var(--rgb-primary-color,3,169,244),.32)}
 .hdr-txt{flex:1;min-width:0}
@@ -709,11 +672,9 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px)}
 .ico-btn:hover{opacity:1;background:var(--secondary-background-color,rgba(0,0,0,.05))}
 .ico-btn.spin svg{animation:spin .8s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
-
 .state{padding:52px 20px;text-align:center;color:var(--secondary-text-color);font-size:14px;display:flex;flex-direction:column;align-items:center;gap:10px;line-height:1.6}
 .state.err{color:var(--error-color,#f44336)}
 .state-ico{font-size:38px;line-height:1}
-
 .allday{display:flex;border-bottom:1px solid var(--divider-color,rgba(0,0,0,.08));background:var(--secondary-background-color,rgba(120,120,128,.05));min-height:32px}
 .allday-lbl{width:${TIME_W}px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:7.5px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:var(--secondary-text-color);opacity:.5;border-right:1px solid var(--divider-color,rgba(0,0,0,.07))}
 .allday-lbl.r{border-right:none;border-left:1px solid var(--divider-color,rgba(0,0,0,.07));order:2}
@@ -721,7 +682,6 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px)}
 .allday-col{flex:1;min-width:0;padding:4px 3px;border-left:1px solid var(--divider-color,rgba(0,0,0,.06));display:flex;flex-direction:column;gap:2px}
 .allday-col:first-child{border-left:none}
 .allday-chip{font-size:9px;font-weight:600;padding:2px 5px;border-radius:5px;background:rgba(var(--rgb-primary-color,3,169,244),.12);color:var(--primary-color,#03a9f4);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.5}
-
 .day-hdrs{display:flex;border-bottom:1px solid var(--divider-color,rgba(0,0,0,.07));background:var(--card-background-color);position:sticky;top:0;z-index:9}
 .time-sp{width:${TIME_W}px;flex-shrink:0}
 .day-hdr{flex:1;min-width:0;text-align:center;padding:7px 3px 6px;border-left:1px solid var(--divider-color,rgba(0,0,0,.06))}
@@ -730,41 +690,29 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px)}
 .d-date{font-size:20px;font-weight:200;color:var(--primary-text-color);line-height:1.3;letter-spacing:-.5px;margin-top:1px}
 .day-hdr.today .d-name{color:var(--primary-color,#03a9f4)}
 .day-hdr.today .d-date{font-weight:700;color:var(--primary-color,#03a9f4)}
-
 .tt-scroll{overflow-y:auto}
 .tt-body{display:flex;position:relative;height:${bodyH}px}
-
 .t-col{width:${TIME_W}px;flex-shrink:0;position:relative}
 .t-col.l{border-right:1px solid var(--divider-color,rgba(0,0,0,.07))}
 .t-col.r{border-left:1px solid var(--divider-color,rgba(0,0,0,.07));order:2}
 .t-lbl{position:absolute;left:0;right:0;text-align:center;font-size:8.5px;font-weight:500;color:var(--secondary-text-color);opacity:.55;transform:translateY(-50%);line-height:1;pointer-events:none;user-select:none;letter-spacing:.2px}
-
 .days-area{flex:1;display:flex;min-width:0}
 .d-col{flex:1;min-width:0;position:relative;border-left:1px solid var(--divider-color,rgba(0,0,0,.055))}
 .d-col:first-child{border-left:none}
 .g-line{position:absolute;left:0;right:0;height:1px;background:var(--divider-color,rgba(0,0,0,.04));pointer-events:none}
-
 .now-line{position:absolute;left:-1px;right:-1px;height:2px;background:var(--primary-color,#03a9f4);z-index:7;border-radius:1px;pointer-events:none}
 .now-dot{position:absolute;left:-4px;top:-3px;width:8px;height:8px;border-radius:50%;background:var(--primary-color,#03a9f4)}
-
-.ev{position:absolute;border-radius:8px;padding:5px 7px 5px 10px;overflow:hidden;cursor:default;z-index:1;display:flex;flex-direction:column;justify-content:flex-start;
-  background:rgba(var(--rgb-primary-color,3,169,244),.08);
-  border-left:3px solid rgba(var(--rgb-primary-color,3,169,244),.45);
-  transition:transform .15s ease,box-shadow .15s ease;will-change:transform}
+.ev{position:absolute;border-radius:8px;padding:5px 7px 5px 10px;overflow:hidden;cursor:default;z-index:1;display:flex;flex-direction:column;justify-content:flex-start;background:rgba(var(--rgb-primary-color,3,169,244),.08);border-left:3px solid rgba(var(--rgb-primary-color,3,169,244),.45);transition:transform .15s ease,box-shadow .15s ease;will-change:transform}
 .ev:hover{z-index:5;transform:scale(1.022) translateZ(0);box-shadow:0 4px 16px rgba(0,0,0,.12)}
 .ev.now{z-index:3;transform:scale(1.03) translateZ(0);box-shadow:0 7px 22px rgba(0,0,0,.14)}
 .ev.now:hover{z-index:6;transform:scale(1.048) translateZ(0)}
-
 .ev-title{font-size:11px;font-weight:700;color:var(--primary-text-color);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.35;letter-spacing:-.1px}
 .ev-loc{font-size:9.5px;color:var(--secondary-text-color);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;line-height:1.2;opacity:.68}
 .ev-notes{font-size:9px;color:var(--secondary-text-color);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px;line-height:1.2;opacity:.38;font-style:italic}
-
 .now-badge{position:absolute;top:4px;right:5px;width:5px;height:5px;border-radius:50%;background:var(--primary-color,#03a9f4);animation:pulse 2s ease-in-out infinite;flex-shrink:0}
-@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.45;transform:scale(.6)}}
-`;
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.45;transform:scale(.6)}}`;
 
-    // ── Header ─────────────────────────────────────────────────────
-    const mondayStr = `${monday.getDate()}. ${TC_MONTHS[monday.getMonth()]} ${monday.getFullYear()}`;
+    const mondayStr = `${monday.getDate()}. ${t.months[monday.getMonth()]} ${monday.getFullYear()}`;
     const hdrHTML = `<div class="hdr">
       <div class="hdr-ico">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="white">
@@ -772,28 +720,27 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px)}
         </svg>
       </div>
       <div class="hdr-txt">
-        <div class="hdr-title">Stundenplan</div>
-        <div class="hdr-sub">KW ${kw} · ${mondayStr}</div>
+        <div class="hdr-title">${t.card_title}</div>
+        <div class="hdr-sub">${t.week_prefix} ${weekNum} · ${mondayStr}</div>
       </div>
       <div class="nav-grp">
-        <button class="nav-btn" id="prev-btn" title="Vorherige Woche">&lt;</button>
-        <button class="nav-btn" id="next-btn" title="Nächste Woche">&gt;</button>
+        <button class="nav-btn" id="prev-btn" title="${t.prev_week}">&lt;</button>
+        <button class="nav-btn" id="next-btn" title="${t.next_week}">&gt;</button>
       </div>
-      <button class="ico-btn${this._loading?' spin':''}" id="ref-btn" title="Aktualisieren">
+      <button class="ico-btn${this._loading?' spin':''}" id="ref-btn" title="${t.refresh}">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
           <path d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
         </svg>
       </button>
     </div>`;
 
-    // ── State screens ──────────────────────────────────────────────
     const ents = this._getEntities();
     if (!ents.length) {
-      this.shadowRoot.innerHTML = `<style>${css}</style><ha-card>${hdrHTML}<div class="state"><div class="state-ico">📋</div>Kein Kalender konfiguriert.<br><small>Karte bearbeiten, um einen Kalender auszuwählen.</small></div></ha-card>`;
+      this.shadowRoot.innerHTML = `<style>${css}</style><ha-card>${hdrHTML}<div class="state"><div class="state-ico">📋</div>${t.state_no_entity}<br><small>${t.state_no_entity_hint}</small></div></ha-card>`;
       this._bindNav(); return;
     }
     if (this._loading && !this._events.length) {
-      this.shadowRoot.innerHTML = `<style>${css}</style><ha-card>${hdrHTML}<div class="state"><div class="state-ico">📅</div>Lade Kalender…</div></ha-card>`;
+      this.shadowRoot.innerHTML = `<style>${css}</style><ha-card>${hdrHTML}<div class="state"><div class="state-ico">📅</div>${t.state_loading}</div></ha-card>`;
       this._bindNav(); return;
     }
     if (this._error) {
@@ -801,11 +748,10 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px)}
       this._bindNav(); return;
     }
     if (!bounds.length && !hasAllDay) {
-      this.shadowRoot.innerHTML = `<style>${css}</style><ha-card>${hdrHTML}<div class="state"><div class="state-ico">🗓️</div>Keine Ereignisse diese Woche</div></ha-card>`;
+      this.shadowRoot.innerHTML = `<style>${css}</style><ha-card>${hdrHTML}<div class="state"><div class="state-ico">🗓️</div>${t.state_no_events}</div></ha-card>`;
       this._bindNav(); return;
     }
 
-    // ── All-day section ────────────────────────────────────────────
     let allDayHTML = '';
     if (hasAllDay) {
       const cols = days.map(day => {
@@ -814,60 +760,44 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px)}
           if (kwRule?.hidden) return '';
           const col = kwRule?.color || this._entityColor(ev);
           const sty = col ? `background:${col}22;color:${col}` : '';
-          const label = (kwRule?.rename) || ev.summary || 'Ganztägig';
+          const label = kwRule?.rename || ev.summary || t.all_day;
           return `<div class="allday-chip" style="${sty}">${tcEsc(label)}</div>`;
         }).join('');
         return `<div class="allday-col">${chips}</div>`;
       }).join('');
       allDayHTML = `<div class="allday">
-        <div class="allday-lbl${timeLeft?'':' r'}">Ganztägig</div>
+        <div class="allday-lbl${timeLeft?'':' r'}">${t.all_day}</div>
         <div class="allday-days">${cols}</div>
       </div>`;
     }
 
-    // ── Day headers ────────────────────────────────────────────────
     const dhCols = days.map(d => `
       <div class="day-hdr${this._isToday(d.date)?' today':''}">
         <div class="d-name">${d.short}</div>
         <div class="d-date">${d.date.getDate()}.</div>
       </div>`).join('');
     const dhHTML = `<div class="day-hdrs">
-      ${timeLeft ? `<div class="time-sp"></div>` : ''}
-      ${dhCols}
-      ${!timeLeft ? `<div class="time-sp"></div>` : ''}
+      ${timeLeft?`<div class="time-sp"></div>`:''}${dhCols}${!timeLeft?`<div class="time-sp"></div>`:''}
     </div>`;
 
-    // ── Time labels ────────────────────────────────────────────────
     const tLabels = bounds.map(m => {
       const top = (m - minT) * ppm + PADDING_TOP;
       return `<div class="t-lbl" style="top:${top}px">${this._fmt(m)}</div>`;
     }).join('');
 
-    // ── Day columns ────────────────────────────────────────────────
     const isCurrentWeek = this._weekOffset === 0;
     const nowMin = this._toMin(now);
     const showNow = isCurrentWeek && nowMin >= minT && nowMin <= maxT;
     const nowTop  = (nowMin - minT) * ppm + PADDING_TOP;
 
     const dCols = days.map((day, di) => {
-      const rawEvs = byDay[di];
+      const rawEvs  = byDay[di];
       const isToday = this._isToday(day.date);
-
-      const gLines = bounds.map(m => {
-        const top = (m - minT) * ppm + PADDING_TOP;
-        return `<div class="g-line" style="top:${top}px"></div>`;
-      }).join('');
-
+      const gLines  = bounds.map(m => `<div class="g-line" style="top:${(m-minT)*ppm+PADDING_TOP}px"></div>`).join('');
       const nowLine = (isToday && showNow)
         ? `<div class="now-line" style="top:${nowTop}px"><div class="now-dot"></div></div>` : '';
-
-      // Filter hidden first
-      const visibleEvs = rawEvs.filter(ev => {
-        const kwRule = this._matchKw(ev);
-        return !kwRule?.hidden;
-      });
-
-      const layout = this._layoutDay(visibleEvs);
+      const visibleEvs = rawEvs.filter(ev => !this._matchKw(ev)?.hidden);
+      const layout     = this._layoutDay(visibleEvs);
 
       const evBlocks = layout.map(({ ev, col, total }) => {
         const s = this._edt(ev,'start'), e = this._edt(ev,'end');
@@ -876,45 +806,31 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px)}
         const top    = (sm - minT) * ppm + PADDING_TOP;
         const height = Math.max((em - sm) * ppm, 28);
         const isCurr = this._isCurrent(ev);
-
-        // Overlap positioning
-        const colGap  = 2;
-        const padding  = 2;
-        const colW     = `calc(${100/total}% - ${colGap*(total-1)/total + padding*2}px)`;
-        const colLeft  = col === 0
-          ? `${padding}px`
-          : `calc(${col * 100/total}% + ${colGap * col/total}px)`;
-
+        const colGap = 2, pad = 2;
+        const colW   = `calc(${100/total}% - ${colGap*(total-1)/total + pad*2}px)`;
+        const colLeft = col === 0 ? `${pad}px` : `calc(${col*100/total}% + ${colGap*col/total}px)`;
         const kwRule  = this._matchKw(ev);
-        const kwCol   = kwRule?.color || null;
-        const entCol  = this._entityColor(ev);
-        const baseCol = kwCol || entCol;
+        const baseCol = kwRule?.color || this._entityColor(ev);
         const rgb     = baseCol ? tcRgb(baseCol) : null;
-        const mode    = kwCol ? (kwRule?.color_mode || 'block') : (entCol ? 'block' : null);
-
-        // Display title (possibly renamed)
-        const displayTitle = (kwRule?.rename) || ev.summary || 'Kein Titel';
+        const mode    = kwRule?.color ? (kwRule.color_mode || 'block') : (this._entityColor(ev) ? 'block' : null);
+        const displayTitle = kwRule?.rename || ev.summary || t.no_title;
         const loc      = (ev.location || '').trim();
         const rawNotes = (ev.description || '').replace(/<[^>]+>/g,'').trim();
         const showLoc  = this._config.show_location !== false && loc;
         const showNote = this._config.show_notes !== false && rawNotes && height > 58;
-
         let sty = `top:${top}px;height:${height}px;left:${colLeft};width:${colW};`;
-
         if (rgb) {
           const { r, g, b } = rgb;
           if (mode === 'block') {
             sty += `background:rgba(${r},${g},${b},.11);border-left-color:rgba(${r},${g},${b},${isCurr?.92:.62});`;
             if (isCurr) sty += `box-shadow:0 6px 20px rgba(${r},${g},${b},.2);`;
           } else {
-            // border only – no fill tint
             sty += `background:transparent;border-left-color:rgba(${r},${g},${b},${isCurr?1:.75});`;
             if (isCurr) sty += `box-shadow:0 4px 14px rgba(${r},${g},${b},.14);`;
           }
         } else if (isCurr) {
           sty += `background:rgba(var(--rgb-primary-color,3,169,244),.13);border-left-color:var(--primary-color,#03a9f4);`;
         }
-
         return `<div class="ev${isCurr?' now':''}" style="${sty}" title="${tcEsc(displayTitle)}${loc?'\n📍 '+loc:''}${rawNotes?'\n📝 '+rawNotes.substring(0,100):''}">
           ${isCurr?`<div class="now-badge"></div>`:''}
           <div class="ev-title">${tcEsc(displayTitle)}</div>
@@ -926,18 +842,13 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px)}
       return `<div class="d-col">${gLines}${nowLine}${evBlocks}</div>`;
     }).join('');
 
-    // ── Assemble ───────────────────────────────────────────────────
     this.shadowRoot.innerHTML = `<style>${css}</style><ha-card>
-      ${hdrHTML}
-      ${allDayHTML}
-      ${dhHTML}
-      <div class="tt-scroll">
-        <div class="tt-body">
-          ${timeLeft ? `<div class="t-col l">${tLabels}</div>` : ''}
-          <div class="days-area">${dCols}</div>
-          ${!timeLeft ? `<div class="t-col r">${tLabels}</div>` : ''}
-        </div>
-      </div>
+      ${hdrHTML}${allDayHTML}${dhHTML}
+      <div class="tt-scroll"><div class="tt-body">
+        ${timeLeft?`<div class="t-col l">${tLabels}</div>`:''}
+        <div class="days-area">${dCols}</div>
+        ${!timeLeft?`<div class="t-col r">${tLabels}</div>`:''}
+      </div></div>
     </ha-card>`;
 
     this._bindNav();
@@ -957,6 +868,9 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px)}
   }
 }
 customElements.define('timetable-card', TimetableCard);
+
+// Pre-load English as fallback so the card renders immediately on first paint
+tcLoadStrings(TC_STRINGS_FALLBACK);
 
 console.info(
   `%c TIMETABLE-CARD %c v${TC_VERSION} `,
