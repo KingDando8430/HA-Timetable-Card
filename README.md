@@ -1,121 +1,179 @@
-# Timetable Card — Home Assistant Lovelace Card
+# Timetable Card
 
-A fully customizable Home Assistant Lovelace card that displays calendar events as a weekly timetable grid. Supports multiple calendar entities, keyword-based coloring, event hiding/renaming, overlap layout, and week navigation — with a polished settings UI.
+A custom Home Assistant Lovelace card that displays calendar events in a weekly school-style timetable grid.
+
+[![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
+[![GitHub release](https://img.shields.io/github/v/release/KingDando8430/HA-Timetable-Card)](https://github.com/KingDando8430/HA-Timetable-Card/releases)
+[![Latest Release](https://img.shields.io/github/release-date/KingDando8430/HA-Timetable-Card?style=flat&label=Latest%20Release)](https://github.com/KingDando8430/HA-Timetable-Card/releases)
+[![Open Issues](https://img.shields.io/github/issues/KingDando8430/HA-Timetable-Card?style=flat&label=Open%20Issues)](https://github.com/KingDando8430/HA-Timetable-Card/issues)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+---
 
 ## Features
 
 - 🗓️ **Weekly grid view** — displays events from one or more calendar entities in a clean day-column layout
 - 🎨 **Per-entity colors** — assign individual colors to each calendar entity
-- 🔑 **Keyword rules** — color, hide, or rename events by keyword (exact or partial match, block or border mode)
+- 🔑 **Keyword rules** — color, hide, or rename events by keyword
 - 📅 **All-day event support** — all-day events are shown separately above the timed grid
 - ↔️ **Week navigation** — browse forward and backward by week with the header arrows
-- ⏱️ **Flexible time axis** — event-based or fixed intervals (15, 30, 60 min); configurable pixels-per-minute
-- 🔀 **Overlap layout** — overlapping events are displayed side-by-side without clipping
+- ⏱️ **Flexible time axis** — Event-based or fixed time interval grid
+- 📏 **Custom size** - Configurable event size (pixels-per-minute)
+- 🔀 **Overlap layout** — overlapping events are displayed side-by-side
 - 📍 **Location & notes** — optionally show event location and description
 - 📆 **Custom weekdays** — show only the days you need (e.g. Mon–Fri only)
 - 🕐 **Time axis position** — place the time column on the left or right
-- 🔄 **Auto refresh** — card updates automatically; configurable refresh interval
-- ⚙️ **Visual settings UI** — Apple/HA-style editor with live preview, no YAML required
+- ⏺️ **Live indicator** - Live "now" indicator line with pulsing badge
+- 🔄 **Auto refresh** — card updates automatically or whenever you prefer
+- ⚙️ **Visual settings UI** — no YAML required
+- 💬 **Multi-Language Support** - Available in English and German
+
+---
 
 ## Installation
 
-### HACS (Recommended)
+### HACS (recommended)
 
-1. Add the repository to HACS as a **Frontend** resource
-
-2. Download the card via HACS and restart Home Assistant if prompted
-3. Add the card to your dashboard via the card picker or manually
+1. Open HACS → Frontend → **Custom repositories**
+2. Add [`https://github.com/KingDando8430/timetable-card`](https://github.com/KingDando8430/HA-Timetable-Card) as type **Dashboard**
+3. Install **Timetable Card**
+4. Reload the Browser
 
 ### Manual
 
-1. Download `timetable-card.js` from the [latest release](https://github.com/KingDando8430/timetable-card/releases)
-2. Copy it to `/config/www/`
-3. Add it as a resource in your dashboard settings:
-- **URL:** `/local/timetable-card.js`
-- **Type:** JavaScript module
-4. Add the card to your dashboard
+1. Copy `dist/timetable-card.js` and the `dist/translations/` folder to  
+   `config/www/timetable-card/`
+2. Add a resource in **Settings → Dashboards → Resources**:
+   ```
+   URL:  /local/timetable-card/timetable-card.js
+   Type: JavaScript module
+   ```
+3. Reload the browser
+
+---
 
 ## Configuration
 
-All options are available via the visual editor. YAML configuration is also supported.
-
-### Minimal example
-
-```yaml
-type: custom:timetable-card
-entities:
-  - calendar.my_calendar
-```
-
-### Full example
+Add the card via the visual editor or use YAML:
 
 ```yaml
 type: custom:timetable-card
 entities:
   - id: calendar.school
     color: "#03a9f4"
-  - id: calendar.work
-    color: "#e91e63"
-time_position: left
+  - id: calendar.sports
+    color: "#4CAF50"
+weekdays:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
 show_location: true
-show_notes: false
-time_interval: "30"
-px_per_min: 3.6
-weekdays: [0, 1, 2, 3, 4]
+show_notes: true
+time_position: left
+time_interval: event_based
+px_per_min: 1.4
 refresh_interval: auto
 keywords:
-  - keyword: Sport
-    color: "#4CAF50"
-    color_mode: border
-    exact_match: false
-    hidden: false
-  - keyword: Holiday
-    color: "#FF9800"
-    color_mode: block
+  - keyword: Math
+    color: "#1f76f7"
     exact_match: true
-    hidden: false
-    rename: "🏖️ Holiday"
+    color_mode: border
   - keyword: Cancelled
-    hidden: true
+    color: "#ff0000"
+    exact_match: false
+    color_mode: block
 ```
 
-## Options
+### Options
 
-|Option            |Type                              |Default      |Description                                                                                           |
-|------------------|----------------------------------|-------------|------------------------------------------------------------------------------------------------------|
-|`entities`        |list                              |`[]`         |Calendar entities. Each entry can be a string (entity ID) or an object with `id` and optional `color`.|
-|`time_position`   |`left` / `right`                  |`left`       |Position of the time axis column                                                                      |
-|`show_location`   |boolean                           |`true`       |Show the event location below the title                                                               |
-|`show_notes`      |boolean                           |`true`       |Show the event description/notes                                                                      |
-|`time_interval`   |`event_based` / `15` / `30` / `60`|`event_based`|Time grid lines; `event_based` only shows lines at event boundaries                                   |
-|`px_per_min`      |number                            |`3.6`        |Pixel height per minute — controls the vertical scale of the grid                                     |
-|`weekdays`        |list of integers                  |`[0–6]`      |Which days to show (0 = Monday … 6 = Sunday)                                                          |
-|`refresh_interval`|`auto` / number (seconds)         |`auto`       |How often the card polls for updated events                                                           |
-|`keywords`        |list                              |`[]`         |Keyword rules — see [Keyword Rules](#keyword-rules)                                                   |
+| Option | Default | Description |
+|---|---|---|
+| `entities` | `[]` | List of calendar entity IDs with optional `color` |
+| `weekdays` | `[0,1,2,3,4,5,6]` | Visible day indices (0 = Monday, 1 = Tuesday, 6 = Sunday) |
+| `show_location` | `true` | Show event location below title |
+| `show_notes` | `true` | Show event description as third line |
+| `time_position` | `left` | Time axis position: `left` or `right` |
+| `time_interval` | `event_based` | Grid lines: `event_based`, `15`, `30`, `60` |
+| `px_per_min` | `3.6` | Pixel height per minute (controls zoom level) |
+| `refresh_interval` | `auto` | Reload interval: `auto`, `5`, `10`, `15`, `30`, `60`, `120`, `180`, `360` minutes |
+| `keywords` | `[]` | Keyword rules (see below) |
 
-## Keyword Rules
+### Keyword Rule Options
 
-Each entry in `keywords` supports the following fields:
+| Option | Default | Description |
+|---|---|---|
+| `keyword` | — | Text to match against event title |
+| `color` | — | Highlight color (hex) |
+| `exact_match` | `true` | `true` = exact title match, `false` = contains match |
+| `color_mode` | `block` | `block` = filled background, `border` = left border only |
+| `hidden` | `false` | Hide matching events completely |
+| `rename` | `""` | Override displayed label (empty = no rename) |
 
-|Field        |Type              |Default  |Description                                                                                          |
-|-------------|------------------|---------|-----------------------------------------------------------------------------------------------------|
-|`keyword`    |string            |—        |The keyword to match against the event title (and description if `exact_match: false`)               |
-|`color`      |hex string        |`#4CAF50`|Color applied to matching events                                                                     |
-|`color_mode` |`block` / `border`|`block`  |`block` fills the event background; `border` adds a colored left border only                         |
-|`exact_match`|boolean           |`true`   |If `true`, only exact title matches are colored. If `false`, matches anywhere in title or description|
-|`hidden`     |boolean           |`false`  |If `true`, matching events are hidden entirely                                                       |
-|`rename`     |string            |`""`     |If set, the event title is replaced with this text in the card                                       |
+---
 
-Rules are evaluated top-to-bottom; the first match wins.
-
-## Folder structure
+## File Structure
 
 ```
-/config/
-  www/
-    timetable-card.js    ← card resource
+timetable-card/
+├── dist/
+│   ├── timetable-card.js
+│   └── translations/
+│       ├── en.json
+│       └── de.json
+└── ...
 ```
+
+---
+
+## Works Great With
+
+[WebUntis Integration](https://github.com/JonasJoKuJonas/homeassistant-WebUntis) by [`@JonasJoKuJonas`](https://github.com/JonasJoKuJonas)
+
+> This project is not affiliated with, endorsed, sponsored, or specifically approved by WebUntis.
+
+Examples with WebUntis Integration:
+
+- Regular lessons displayed in the timetable
+- Cancelled lessons highlighted in red
+- Room changes highlighted in yellow
+
+```
+entities:
+  - id: calendar.username
+  - id: calendar.schulferien
+    color: "#e292fe"
+time_position: left
+show_location: true
+show_notes: true
+time_interval: event_based
+px_per_min: 1.4
+keywords:
+  - keyword: cancelled
+    color: "#ff0000"
+    exact_match: false
+  - keyword: change
+    color: "#f5ec00"
+    exact_match: false
+  - keyword: Ferien
+    rename: Ferien
+    exact_match: false
+refresh_interval: auto
+weekdays:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+type: custom:timetable-card
+grid_options:
+  rows: auto
+  columns: full
+```
+
+---
 
 ## License
 
-MIT License – see <LICENSE>
+MIT © [KingDando8430](https://github.com/KingDando8430)
