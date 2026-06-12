@@ -6,27 +6,30 @@ A custom Home Assistant Lovelace card that displays calendar events in a weekly 
 [![GitHub release](https://img.shields.io/github/v/release/KingDando8430/HA-Timetable-Card)](https://github.com/KingDando8430/HA-Timetable-Card/releases)
 [![Latest Release](https://img.shields.io/github/release-date/KingDando8430/HA-Timetable-Card?style=flat&label=Latest%20Release)](https://github.com/KingDando8430/HA-Timetable-Card/releases)
 [![Open Issues](https://img.shields.io/github/issues/KingDando8430/HA-Timetable-Card?style=flat&label=Open%20Issues)](https://github.com/KingDando8430/HA-Timetable-Card/issues)
+[![GitHub stars](https://img.shields.io/github/stars/KingDando8430/HA-Timetable-Card?style=flat&label=Stars)](https://github.com/KingDando8430/HA-Timetable-Card/stargazers)
+[![Website](https://img.shields.io/badge/Website-OPEN_HERE-blue)](https://kingdando8430.github.io/HA-Timetable-Card/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ---
 
 ## Features
 
-- 🗓️ **Weekly grid view** — displays events from one or more calendar entities in a clean day-column layout
-- 🎨 **Per-entity colors** — assign individual colors to each calendar entity
-- 🔑 **Keyword rules** — color, hide, or rename events by keyword
-- 📅 **All-day event support** — all-day events are shown separately above the timed grid
-- ↔️ **Week navigation** — browse forward and backward by week with the header arrows
-- ⏱️ **Flexible time axis** — Event-based or fixed time interval grid
-- 📏 **Custom size** - Configurable event size (pixels-per-minute)
-- 🔀 **Overlap layout** — overlapping events are displayed side-by-side
-- 📍 **Location & notes** — optionally show event location and description
-- 📆 **Custom weekdays** — show only the days you need (e.g. Mon–Fri only)
-- 🕐 **Time axis position** — place the time column on the left or right
-- ⏺️ **Live indicator** - Live "now" indicator line with pulsing badge
-- 🔄 **Auto refresh** — card updates automatically or whenever you prefer
-- ⚙️ **Visual settings UI** — no YAML required
-- 💬 **Multi-Language Support** - Available in English and German
+* 🗓️ **Weekly timetable view** — shows events from one or multiple calendar entities in a clear weekly layout
+* 🎨 **Custom entity colors** — set a different color for each calendar entity
+* 🔑 **Keyword-based rules** — change colors, hide events, or rename them based on keywords
+* 📅 **All-day events** — displayed separately above the regular timetable
+* ↔️ **Week navigation** — switch between weeks using the arrows in the header
+* ⏱️ **Flexible time grid** — choose between an event-based or fixed time interval layout
+* 📏 **Adjustable event size** — customize the height of events with pixels-per-minute settings
+* 🔀 **Overlap support** — overlapping events are shown side by side
+* 📍 **Location and notes** — optionally display event locations and descriptions
+* 📆 **Custom weekdays** — show only the days you want, such as Monday to Friday
+* 🕐 **Time column position** — place the time axis on the left or right side
+* ⏺️ **Live "Now" indicator** — highlights the current time with a live indicator line
+* 🔄 **Automatic updates** — refreshes automatically at configurable intervals
+* ⚙️ **Built-in configuration UI** — no YAML required
+* 💬 **Multi-language support** — available in English and German
+
 
 ---
 
@@ -54,7 +57,14 @@ A custom Home Assistant Lovelace card that displays calendar events in a weekly 
 
 ## Configuration
 
-Add the card via the visual editor or use YAML:
+Add the card via the visual editor or use the code editor.
+
+> [!TIP]
+> You can easily generate your YAML code here:
+> https://kingdando8430.github.io/HA-Timetable-Card/config-builder
+> > NO AI :)
+
+### Code example:
 
 ```yaml
 type: custom:timetable-card
@@ -148,38 +158,10 @@ Examples with WebUntis Integration:
 - Cancelled lessons highlighted in red
 - Room changes highlighted in yellow
 
-```
-entities:
-  - id: calendar.username
-  - id: calendar.schulferien
-    color: "#e292fe"
-time_position: left
-show_location: true
-show_notes: true
-time_interval: event_based
-px_per_min: 1.4
-keywords:
-  - keyword: cancelled
-    color: "#ff0000"
-    exact_match: false
-  - keyword: change
-    color: "#f5ec00"
-    exact_match: false
-  - keyword: Ferien
-    rename: Ferien
-    exact_match: false
-refresh_interval: auto
-weekdays:
-  - 0
-  - 1
-  - 2
-  - 3
-  - 4
-type: custom:timetable-card
-grid_options:
-  rows: auto
-  columns: full
-```
+> [!TIP]
+> You can easily generate your YAML code here:
+> https://kingdando8430.github.io/HA-Timetable-Card/config-builder
+> > NO AI :)
 
 ---
 

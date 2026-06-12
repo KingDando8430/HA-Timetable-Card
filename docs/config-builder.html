@@ -1,0 +1,836 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Timetable Card · Config Builder</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:         #1c1c1e;
+  --surface:    #2c2c2e;
+  --surface2:   #3a3a3c;
+  --border:     #48484a;
+  --accent:     #0a84ff;
+  --accent-dim: rgba(10,132,255,.13);
+  --danger:     #ff453a;
+  --success:    #30d158;
+  --text:       #f2f2f7;
+  --muted:      rgba(235,235,245,.52);
+  --mono:       "SF Mono","Fira Mono","Consolas",monospace;
+  --sans:       -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif;
+  --r:          10px;
+  --r-sm:       6px;
+}
+
+html {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.5;
+  min-height: 100%;
+}
+
+body { min-height: 100vh; }
+
+/* ─── Top bar ─── */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 20px;
+  background: rgba(28,28,30,.88);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--border);
+}
+
+.topbar-logo {
+  width: 26px; height: 26px;
+  background: var(--accent);
+  border-radius: 7px;
+  display: grid; place-items: center;
+  flex-shrink: 0;
+}
+.topbar-logo svg { width: 14px; height: 14px; fill: #fff; }
+
+.topbar h1 {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -.2px;
+  white-space: nowrap;
+}
+.topbar h1 span { color: var(--muted); font-weight: 400; }
+
+/* ─── Main layout ─── */
+/* Desktop: side-by-side. Mobile: stacked. */
+.layout {
+  display: grid;
+  grid-template-columns: 1fr 400px;
+  gap: 0;
+  align-items: start;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+/* Editor column – scrolls with page */
+.editor {
+  padding: 24px 20px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+/* Preview column – sticky on desktop */
+.preview-col {
+  position: sticky;
+  top: 52px;                 /* below topbar */
+  height: calc(100vh - 52px);
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.preview-header {
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.preview-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .6px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.yaml-output {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.75;
+  white-space: pre;
+  color: #e0e0e8;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.yaml-output .yk { color: #79d9ff; }   /* key */
+.yaml-output .yv { color: #f2f2f7; }   /* value */
+.yaml-output .ys { color: #ff8e6e; }   /* string/color */
+.yaml-output .yn { color: #c5a0f2; }   /* number */
+.yaml-output .yb { color: #e8a93d; }   /* boolean */
+
+/* ─── Mobile: stack preview below editor ─── */
+@media (max-width: 768px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+  .editor {
+    padding: 16px 14px 0;
+    gap: 12px;
+  }
+  .preview-col {
+    position: static;
+    height: auto;
+    border-left: none;
+    border-top: 1px solid var(--border);
+    margin-top: 24px;
+  }
+  .yaml-output {
+    min-height: 280px;
+    max-height: 420px;
+  }
+}
+
+/* ─── Section cards ─── */
+.section {
+  background: var(--surface);
+  border-radius: var(--r);
+  border: 1px solid var(--border);
+  /* no overflow:hidden – let height grow freely */
+}
+
+.section-header {
+  padding: 13px 16px 11px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.section-title {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -.1px;
+}
+
+.section-body {
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ─── Form elements ─── */
+.field-label {
+  font-size: 12px;
+  color: var(--muted);
+  display: block;
+  margin-bottom: 4px;
+}
+
+input[type="text"],
+select {
+  width: 100%;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 13px;
+  padding: 8px 10px;
+  outline: none;
+  transition: border-color .15s, box-shadow .15s;
+  -webkit-appearance: none;
+  appearance: none;
+}
+input[type="text"]:focus,
+select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-dim);
+}
+input[type="text"]::placeholder { color: var(--muted); }
+
+input[type="color"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 36px;
+  padding: 3px 5px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+input[type="color"]::-webkit-color-swatch { border: none; border-radius: 3px; }
+
+.select-wrap { position: relative; }
+.select-wrap::after {
+  content: "⌄";
+  position: absolute;
+  right: 10px; top: 50%;
+  transform: translateY(-56%);
+  color: var(--muted);
+  pointer-events: none;
+  font-size: 13px;
+}
+.select-wrap select { padding-right: 28px; }
+
+/* ─── Entity rows ─── */
+.entity-row {
+  display: grid;
+  grid-template-columns: 1fr auto 32px;
+  gap: 8px;
+  align-items: end;
+}
+
+.color-toggle-wrap { display: flex; flex-direction: column; min-width: 76px; }
+
+/* ─── Weekday grid ─── */
+.weekday-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+}
+
+.wd-btn {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 9px 4px;
+  text-align: center;
+  cursor: pointer;
+  user-select: none;
+  transition: background .12s, border-color .12s, color .12s;
+}
+.wd-btn.on {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ─── Keyword rules ─── */
+.kw-rule {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  position: relative;
+}
+
+.kw-rule.locked {
+  border-color: rgba(255,255,255,.07);
+  opacity: .68;
+}
+.kw-auto-badge {
+  position: absolute;
+  top: 10px; right: 10px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .5px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.kw-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.kw-grid .full { grid-column: 1 / -1; }
+
+.kw-err {
+  font-size: 11px;
+  color: var(--danger);
+  display: none;
+  margin-top: -4px;
+}
+.kw-err.show { display: block; }
+
+/* ─── Toggle checkbox rows ─── */
+.cb-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 4px;
+  cursor: pointer;
+  user-select: none;
+}
+.cb-label input[type="checkbox"] {
+  width: 14px; height: 14px;
+  accent-color: var(--accent);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.field-disabled {
+  opacity: .38;
+  pointer-events: none;
+}
+
+/* ─── Buttons ─── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: none;
+  border-radius: var(--r-sm);
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 7px 14px;
+  transition: opacity .15s;
+  white-space: nowrap;
+}
+.btn:hover { opacity: .82; }
+.btn:active { opacity: .65; }
+
+.btn-primary { background: var(--accent); color: #fff; }
+.btn-ghost {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--danger);
+  font-size: 12px;
+  padding: 5px 10px;
+}
+.btn-icon {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--danger);
+  width: 32px; height: 36px;
+  padding: 0;
+  display: grid; place-items: center;
+  font-size: 18px;
+  border-radius: var(--r-sm);
+  line-height: 1;
+}
+
+.btn-copy {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--r-sm);
+  padding: 5px 13px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity .15s, background .2s;
+}
+.btn-copy:hover { opacity: .85; }
+.btn-copy.ok { background: var(--success); }
+
+.notice {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+/* ─── Mobile tweaks ─── */
+@media (max-width: 480px) {
+  .weekday-grid { gap: 4px; }
+  .wd-btn { font-size: 10px; padding: 8px 2px; }
+  .kw-grid { grid-template-columns: 1fr; }
+  .kw-grid .full { grid-column: 1; }
+  .entity-row { grid-template-columns: 1fr 32px; }
+  .color-toggle-wrap { display: none; } /* hide color picker on very small screens, entity just gets id */
+}
+</style>
+</head>
+<body>
+
+<!-- ─── Top bar ─── -->
+<div class="topbar">
+  <div class="topbar-logo">
+    <svg viewBox="0 0 16 16"><rect x="1" y="1" width="6" height="6" rx="1.5"/><rect x="9" y="1" width="6" height="6" rx="1.5"/><rect x="1" y="9" width="6" height="6" rx="1.5"/><rect x="9" y="9" width="6" height="6" rx="1.5"/></svg>
+  </div>
+  <h1>Timetable Card &thinsp;<span>Config Builder</span></h1>
+</div>
+
+<div class="layout">
+
+  <!-- ─── Left: editor ─── -->
+  <div class="editor">
+
+    <!-- Entities -->
+    <div class="section" id="sec-entities">
+      <div class="section-header">
+        <span class="section-title">Entities</span>
+        <button class="btn btn-primary" onclick="addEntity()">+ Add</button>
+      </div>
+      <div class="section-body" id="entity-list"></div>
+    </div>
+
+    <!-- Weekdays -->
+    <div class="section">
+      <div class="section-header">
+        <span class="section-title">Weekdays</span>
+      </div>
+      <div class="section-body">
+        <div class="weekday-grid" id="weekday-grid"></div>
+        <p class="notice">0 = Monday &nbsp;·&nbsp; 6 = Sunday</p>
+      </div>
+    </div>
+
+    <!-- Keyword Rules -->
+    <div class="section">
+      <div class="section-header">
+        <span class="section-title">Keyword Rules</span>
+        <button class="btn btn-primary" onclick="addKeyword()">+ Add</button>
+      </div>
+      <div class="section-body" id="kw-list"></div>
+    </div>
+
+  </div>
+
+  <!-- ─── Right: YAML preview ─── -->
+  <div class="preview-col">
+    <div class="preview-header">
+      <span class="preview-label">YAML Output</span>
+      <button class="btn-copy" id="btn-copy" onclick="copyYaml()">Copy</button>
+    </div>
+    <div class="yaml-output" id="yaml-out"></div>
+  </div>
+
+</div><!-- /.layout -->
+
+<script>
+// ══════════════════════════════════════════════════
+//  State
+// ══════════════════════════════════════════════════
+const state = {
+  entities: [],
+  weekdays: [0,1,2,3,4],
+  keywords: [],
+};
+let _eid = 0, _kid = 0;
+
+const WD_LABELS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+
+const LOCKED = [
+  { keyword:'cancelled', color:'#ff0000', exact_match: false },
+  { keyword:'change',    color:'#f5ec00', exact_match: false },
+];
+
+// ══════════════════════════════════════════════════
+//  Bootstrap
+// ══════════════════════════════════════════════════
+function init() {
+  addEntity();
+  renderWeekdays();
+  renderLockedKw();
+  update();
+}
+
+// ══════════════════════════════════════════════════
+//  Entities
+// ══════════════════════════════════════════════════
+function addEntity() {
+  state.entities.push({ id: ++_eid, entityId:'', useColor:false, color:'#0a84ff' });
+  renderEntities();
+  update();
+}
+
+function removeEntity(id) {
+  state.entities = state.entities.filter(e => e.id !== id);
+  renderEntities();
+  update();
+}
+
+function setEntity(id, key, val) {
+  const e = state.entities.find(x => x.id === id);
+  if (!e) return;
+  e[key] = val;
+  if (key === 'useColor') renderEntities();
+  update();
+}
+
+function renderEntities() {
+  const list = document.getElementById('entity-list');
+  if (state.entities.length === 0) {
+    list.innerHTML = '<p class="notice">No entities added yet.</p>';
+    return;
+  }
+  list.innerHTML = '';
+  state.entities.forEach(e => {
+    const row = document.createElement('div');
+    row.className = 'entity-row';
+
+    // entity id cell
+    const idCell = document.createElement('div');
+    idCell.innerHTML = `
+      <label class="field-label">Entity ID</label>
+      <input type="text" placeholder="calendar.example"
+        value="${xesc(e.entityId)}"
+        oninput="setEntity(${e.id},'entityId',this.value)" />`;
+
+    // color cell
+    const colCell = document.createElement('div');
+    colCell.className = 'color-toggle-wrap';
+    colCell.innerHTML = `
+      <label class="cb-label">
+        <input type="checkbox" ${e.useColor?'checked':''}
+          onchange="setEntity(${e.id},'useColor',this.checked)" />
+        Color
+      </label>
+      <input type="color" value="${e.color}"
+        class="${e.useColor?'':'field-disabled'}"
+        onchange="setEntity(${e.id},'color',this.value)" />`;
+
+    // remove btn
+    const rmBtn = document.createElement('button');
+    rmBtn.className = 'btn btn-icon';
+    rmBtn.title = 'Remove';
+    rmBtn.innerHTML = '×';
+    rmBtn.onclick = () => removeEntity(e.id);
+
+    row.appendChild(idCell);
+    row.appendChild(colCell);
+    row.appendChild(rmBtn);
+    list.appendChild(row);
+  });
+}
+
+// ══════════════════════════════════════════════════
+//  Weekdays
+// ══════════════════════════════════════════════════
+function renderWeekdays() {
+  const grid = document.getElementById('weekday-grid');
+  grid.innerHTML = '';
+  WD_LABELS.forEach((lbl, i) => {
+    const btn = document.createElement('div');
+    btn.className = 'wd-btn' + (state.weekdays.includes(i) ? ' on' : '');
+    btn.textContent = lbl;
+    btn.onclick = () => toggleWd(i);
+    grid.appendChild(btn);
+  });
+}
+
+function toggleWd(i) {
+  const idx = state.weekdays.indexOf(i);
+  if (idx > -1) state.weekdays.splice(idx, 1);
+  else { state.weekdays.push(i); state.weekdays.sort((a,b)=>a-b); }
+  renderWeekdays();
+  update();
+}
+
+// ══════════════════════════════════════════════════
+//  Keyword rules
+// ══════════════════════════════════════════════════
+function renderLockedKw() {
+  const list = document.getElementById('kw-list');
+  LOCKED.forEach(r => {
+    const div = document.createElement('div');
+    div.className = 'kw-rule locked';
+    div.innerHTML = `
+      <span class="kw-auto-badge">Auto</span>
+      <div class="kw-grid">
+        <div class="full">
+          <label class="field-label">Keyword</label>
+          <input type="text" value="${r.keyword}" disabled />
+        </div>
+        <div>
+          <label class="field-label">Color</label>
+          <input type="color" value="${r.color}" disabled class="field-disabled" />
+        </div>
+        <div>
+          <label class="field-label">Exact Match</label>
+          <input type="text" value="false" disabled />
+        </div>
+      </div>`;
+    list.appendChild(div);
+  });
+}
+
+function addKeyword() {
+  state.keywords.push({
+    id: ++_kid,
+    keyword:'',
+    useColor:false,     color:'#0a84ff',
+    useExact:false,     exact:'false',
+    useColorMode:false, colorMode:'block',
+    useHidden:false,    hidden:'true',
+    rename:'',
+  });
+  renderUserKw();
+  update();
+}
+
+function removeKeyword(id) {
+  state.keywords = state.keywords.filter(k => k.id !== id);
+  renderUserKw();
+  update();
+}
+
+function setKw(id, key, val) {
+  const k = state.keywords.find(x => x.id === id);
+  if (!k) return;
+  k[key] = val;
+  const rerender = ['useColor','useExact','useColorMode','useHidden'].includes(key);
+  if (rerender) renderUserKw();
+  update();
+}
+
+function renderUserKw() {
+  const list = document.getElementById('kw-list');
+  list.querySelectorAll('.kw-rule:not(.locked)').forEach(el => el.remove());
+
+  state.keywords.forEach(k => {
+    const hasExtra = k.useColor || k.useExact || k.useColorMode || k.useHidden || k.rename.trim();
+
+    const div = document.createElement('div');
+    div.className = 'kw-rule';
+    div.innerHTML = `
+      <div class="kw-grid">
+
+        <div class="full">
+          <label class="field-label">Keyword *</label>
+          <input type="text" placeholder="e.g. Exam" value="${xesc(k.keyword)}"
+            oninput="setKw(${k.id},'keyword',this.value)" />
+        </div>
+
+        <div>
+          <label class="cb-label">
+            <input type="checkbox" ${k.useColor?'checked':''}
+              onchange="setKw(${k.id},'useColor',this.checked)" />
+            Color
+          </label>
+          <input type="color" value="${k.color}"
+            class="${k.useColor?'':'field-disabled'}"
+            onchange="setKw(${k.id},'color',this.value)" />
+        </div>
+
+        <div>
+          <label class="cb-label">
+            <input type="checkbox" ${k.useExact?'checked':''}
+              onchange="setKw(${k.id},'useExact',this.checked)" />
+            Exact Match
+          </label>
+          <div class="select-wrap">
+            <select class="${k.useExact?'':'field-disabled'}"
+              onchange="setKw(${k.id},'exact',this.value)">
+              <option value="false" ${k.exact==='false'?'selected':''}>false</option>
+              <option value="true"  ${k.exact==='true' ?'selected':''}>true</option>
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <label class="cb-label">
+            <input type="checkbox" ${k.useColorMode?'checked':''}
+              onchange="setKw(${k.id},'useColorMode',this.checked)" />
+            Color Mode
+          </label>
+          <div class="select-wrap">
+            <select class="${k.useColorMode?'':'field-disabled'}"
+              onchange="setKw(${k.id},'colorMode',this.value)">
+              <option value="block"  ${k.colorMode==='block' ?'selected':''}>block</option>
+              <option value="border" ${k.colorMode==='border'?'selected':''}>border</option>
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <label class="cb-label">
+            <input type="checkbox" ${k.useHidden?'checked':''}
+              onchange="setKw(${k.id},'useHidden',this.checked)" />
+            Hidden
+          </label>
+          <div class="select-wrap">
+            <select class="${k.useHidden?'':'field-disabled'}"
+              onchange="setKw(${k.id},'hidden',this.value)">
+              <option value="true"  ${k.hidden==='true' ?'selected':''}>true</option>
+              <option value="false" ${k.hidden==='false'?'selected':''}>false</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="full">
+          <label class="field-label">Rename <span style="color:var(--muted)">(optional)</span></label>
+          <input type="text" placeholder="Display name" value="${xesc(k.rename)}"
+            oninput="setKw(${k.id},'rename',this.value)" />
+        </div>
+
+      </div>
+
+      <span class="kw-err${k.keyword && !hasExtra ? ' show':''}">
+        At least one additional option must be set.
+      </span>
+
+      <div style="display:flex;justify-content:flex-end">
+        <button class="btn btn-ghost" onclick="removeKeyword(${k.id})">Remove</button>
+      </div>
+    `;
+    list.appendChild(div);
+  });
+}
+
+// ══════════════════════════════════════════════════
+//  YAML
+// ══════════════════════════════════════════════════
+function buildLines() {
+  const L = [];
+  const kv  = (raw) => L.push({ cls:'yk', raw });
+  const val  = (raw) => L.push({ cls:'yv', raw });
+  const str  = (raw) => L.push({ cls:'ys', raw });
+  const num  = (raw) => L.push({ cls:'yn', raw });
+  const bool = (raw) => L.push({ cls:'yb', raw });
+
+  // Fixed keys
+  kv('type: custom:timetable-card');
+  kv('time_position: left');
+  kv('show_location: true');
+  kv('show_notes: true');
+  kv('time_interval: event_based');
+  kv('px_per_min: 1.4');
+  kv('refresh_interval: auto');
+  kv('grid_options:');
+  val('  rows: auto');
+  val('  columns: full');
+
+  // Entities
+  const validE = state.entities.filter(e => e.entityId.trim());
+  if (validE.length) {
+    kv('entities:');
+    validE.forEach(e => {
+      kv(`  - id: ${e.entityId.trim()}`);
+      if (e.useColor && e.color) str(`    color: "${e.color}"`);
+    });
+  }
+
+  // Weekdays
+  if (state.weekdays.length) {
+    kv('weekdays:');
+    state.weekdays.forEach(d => num(`  - ${d}`));
+  }
+
+  // Keyword rules
+  kv('keyword_rules:');
+  LOCKED.forEach(r => {
+    kv(`  - keyword: ${r.keyword}`);
+    str(`    color: "${r.color}"`);
+    bool('    exact_match: false');
+  });
+
+  state.keywords.forEach(k => {
+    if (!k.keyword.trim()) return;
+    const hasExtra = k.useColor || k.useExact || k.useColorMode || k.useHidden || k.rename.trim();
+    if (!hasExtra) return;
+    kv(`  - keyword: ${k.keyword.trim()}`);
+    if (k.useColor)     str(`    color: "${k.color}"`);
+    if (k.useExact)     bool(`    exact_match: ${k.exact}`);
+    if (k.useColorMode) val(`    color_mode: ${k.colorMode}`);
+    if (k.useHidden)    bool(`    hidden: ${k.hidden}`);
+    if (k.rename.trim()) val(`    rename: ${k.rename.trim()}`);
+  });
+
+  return L;
+}
+
+function renderYaml() {
+  const lines = buildLines();
+  document.getElementById('yaml-out').innerHTML =
+    lines.map(l => `<span class="${l.cls}">${hesc(l.raw)}</span>`).join('\n');
+}
+
+function getYamlText() {
+  return buildLines().map(l => l.raw).join('\n');
+}
+
+// ══════════════════════════════════════════════════
+//  Copy
+// ══════════════════════════════════════════════════
+function copyYaml() {
+  navigator.clipboard.writeText(getYamlText()).then(() => {
+    const btn = document.getElementById('btn-copy');
+    btn.textContent = '✓ Copied';
+    btn.classList.add('ok');
+    setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('ok'); }, 1800);
+  });
+}
+
+// ══════════════════════════════════════════════════
+//  Helpers
+// ══════════════════════════════════════════════════
+function xesc(s) { return (s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;'); }
+function hesc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function update() { renderYaml(); }
+
+init();
+</script>
+</body>
+</html>

@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Timetable Card</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:         #1c1c1e;
+  --surface:    #2c2c2e;
+  --border:     #48484a;
+  --accent:     #0a84ff;
+  --accent-dim: rgba(10,132,255,.13);
+  --text:       #f2f2f7;
+  --muted:      rgba(235,235,245,.52);
+  --sans:       -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif;
+  --r:          10px;
+  --r-sm:       6px;
+}
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+/* ─── Top bar ─── */
+.topbar {
+  height: 52px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 20px;
+  background: rgba(28,28,30,.88);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.topbar-logo {
+  width: 26px; height: 26px;
+  background: var(--accent);
+  border-radius: 7px;
+  display: grid; place-items: center;
+  flex-shrink: 0;
+}
+.topbar-logo svg { width: 14px; height: 14px; fill: #fff; }
+
+.topbar h1 {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -.2px;
+}
+
+/* ─── Center stage ─── */
+.stage {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 36px 32px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 28px;
+  width: 100%;
+  max-width: 380px;
+}
+
+.hero-icon {
+  width: 56px; height: 56px;
+  background: var(--accent);
+  border-radius: 14px;
+  display: grid; place-items: center;
+}
+.hero-icon svg { width: 28px; height: 28px; fill: #fff; }
+
+.hero-text {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.hero-text h2 {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -.3px;
+}
+.hero-text p {
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.divider {
+  width: 100%;
+  height: 1px;
+  background: var(--border);
+}
+
+.btn-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+
+.hacs-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+}
+.hacs-btn img {
+  height: 40px;
+  width: auto;
+  display: block;
+  border-radius: var(--r-sm);
+  transition: opacity .15s;
+}
+.hacs-btn:hover img { opacity: .85; }
+
+.btn-secondary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  width: 100%;
+  padding: 11px 16px;
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  font-family: var(--sans);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background .15s, border-color .15s;
+}
+.btn-secondary:hover {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+}
+
+.btn-svg { width: 16px; height: 16px; flex-shrink: 0; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-logo">
+    <svg viewBox="0 0 16 16"><rect x="1" y="1" width="6" height="6" rx="1.5"/><rect x="9" y="1" width="6" height="6" rx="1.5"/><rect x="1" y="9" width="6" height="6" rx="1.5"/><rect x="9" y="9" width="6" height="6" rx="1.5"/></svg>
+  </div>
+  <h1>Timetable Card</h1>
+</div>
+
+<div class="stage">
+  <div class="card">
+
+    <div class="hero-icon">
+      <svg viewBox="0 0 24 24">
+        <path d="M19 4h-1V2h-2v2H8V2H6v2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zm0 16H5V10h14v10zm0-12H5V6h14v2z"/>
+      </svg>
+    </div>
+
+    <div class="hero-text">
+      <h2>Timetable Card</h2>
+      <p>A custom Home Assistant Lovelace card that displays calendar events in a weekly school-style timetable grid.</p>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="btn-group">
+
+      <a class="hacs-btn"
+        href="https://my.home-assistant.io/redirect/hacs_repository/?owner=KingDando8430&repository=HA-Timetable-Card&category=plugin"
+        target="_blank" rel="noreferrer noopener">
+        <img src="https://my.home-assistant.io/badges/hacs_repository.svg"
+          alt="Open your Home Assistant instance and open a repository inside the Home Assistant Community Store." />
+      </a>
+
+      <a class="btn-secondary"
+        href="https://kingdando8430.github.io/ha-timetable-card/config-builder"
+        target="_blank" rel="noreferrer noopener">
+        <svg class="btn-svg" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/>
+        </svg>
+        Config Builder
+      </a>
+
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
