@@ -6,6 +6,8 @@ A custom Home Assistant Lovelace card that displays calendar events in a weekly 
 [![GitHub release](https://img.shields.io/github/v/release/KingDando8430/HA-Timetable-Card)](https://github.com/KingDando8430/HA-Timetable-Card/releases)
 [![Latest Release](https://img.shields.io/github/release-date/KingDando8430/HA-Timetable-Card?style=flat&label=Latest%20Release)](https://github.com/KingDando8430/HA-Timetable-Card/releases)
 [![Open Issues](https://img.shields.io/github/issues/KingDando8430/HA-Timetable-Card?style=flat&label=Open%20Issues)](https://github.com/KingDando8430/HA-Timetable-Card/issues)
+[![GitHub stars](https://img.shields.io/github/stars/KingDando8430/HA-Timetable-Card?style=flat&label=Stars)](https://github.com/KingDando8430/HA-Timetable-Card/stargazers)
+[![Website](https://img.shields.io/badge/Website-OPEN_HERE-blue)](https://kingdando8430.github.io/HA-Timetable-Card/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ---
@@ -59,7 +61,7 @@ Add the card via the visual editor or use the code editor.
 
 > [!TIP]
 > You can easily generate your YAML code here:
-> https://kingdando8430.github.io/HA-Timetable-Card
+> https://kingdando8430.github.io/HA-Timetable-Card/config-builder
 > > NO AI :)
 
 ### Code example:
@@ -158,7 +160,7 @@ Examples with WebUntis Integration:
 
 > [!TIP]
 > You can easily generate your YAML code here:
-> https://kingdando8430.github.io/HA-Timetable-Card
+> https://kingdando8430.github.io/HA-Timetable-Card/config-builder
 > > NO AI :)
 
 ---
