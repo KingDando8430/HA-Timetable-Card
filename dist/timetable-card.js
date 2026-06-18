@@ -1,11 +1,11 @@
 // ═══════════════════════════════════════════════════════════════════
 // Home Assistant Timetable Card
 // Author: KingDando8430
-// https://github.com/KingDando8430/timetable-card
-// Version: 1.1.0
+// https://github.com/KingDando8430/HA-Timetable-Card
+// Version: 1.2.0
 // ═══════════════════════════════════════════════════════════════════
 
-const TC_VERSION = '1.1.0';
+const TC_VERSION = '1.2.0';
 
 window.customCards = window.customCards || [];
 window.customCards.push({
@@ -13,7 +13,13 @@ window.customCards.push({
   name: 'Timetable Card',
   description: 'Weekly timetable view for calendar entities',
   preview: true,
-  documentationURL: 'https://github.com/KingDando8430/timetable-card',
+  documentationURL: 'https://github.com/KingDando8430/HA-Timetable-Card',
+  getEntitySuggestion: (hass, entityId) => {
+    if (entityId.split('.')[0] !== 'calendar') return null;
+    return {
+      config: { type: 'custom:timetable-card', entities: [{ id: entityId, color: null }] },
+    };
+  },
 });
 
 // ─── Translation loader ───────────────────────────────────────────
@@ -34,15 +40,12 @@ async function tcLoadStrings(lang) {
   }
 }
 
-// Synchronous accessor – returns cached strings or fallback (en) if not yet loaded.
-// Components call tcLoadStrings() on init and re-render once the promise resolves.
 function tcS(hass) {
   const lang = hass?.locale?.language || hass?.language || TC_STRINGS_FALLBACK;
   return TC_STRINGS_CACHE[lang] || TC_STRINGS_CACHE[TC_STRINGS_FALLBACK] || {};
 }
 
 // ─── Constants ──────────────────────────────────────────────────────
-// Day order (0 = Monday … 6 = Sunday); keys are language-neutral
 const TC_DAY_KEYS = ['monday','tuesday','wednesday','thursday','friday','saturday','sunday'];
 
 const TIME_W     = 50;
@@ -55,14 +58,14 @@ const TC_DEFAULT = {
   show_location: true,
   show_notes: true,
   time_interval: 'event_based',
-  px_per_min: 3.6,
+  px_per_min: 1.4,
   keywords: [],
   refresh_interval: 'auto',
   weekdays: [0, 1, 2, 3, 4, 5, 6],
 };
 
 // ═══════════════════════════════════════════════════════════════════
-// HELPERS (shared)
+// HELPERS
 // ═══════════════════════════════════════════════════════════════════
 function tcEsc(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -172,8 +175,10 @@ class TimetableCardEditor extends HTMLElement {
   // ── Keywords ────────────────────────────────────────────────────
   _addKw() {
     this._set('keywords', [...(this._config.keywords || []), {
-      keyword: '', color: '#4CAF50', exact_match: true,
-      color_mode: 'block', hidden: false, rename: ''
+      keyword: '', color: null, exact_match: true,
+      color_mode: 'block', hidden: false, rename: '',
+      rename_enabled: false, partial_rename_enabled: false,
+      partial_rename_mode: 'keyword', partial_rename_text: ''
     }]);
   }
   _rmKw(i)      { const a = [...(this._config.keywords||[])]; a.splice(i,1); this._set('keywords', a); }
@@ -188,11 +193,15 @@ class TimetableCardEditor extends HTMLElement {
       el.innerHTML = `<p class="hint">${t.kw_hint}</p>`;
       return;
     }
-    el.innerHTML = kws.map((kw, i) => `
+    el.innerHTML = kws.map((kw, i) => {
+      const renameOn   = kw.rename_enabled === true;
+      const partialOn  = renameOn && kw.partial_rename_enabled === true;
+      const partMode   = kw.partial_rename_mode || 'keyword';
+      return `
       <div class="kw-card">
         <div class="kw-r1">
           <input class="kw-in" placeholder="${t.kw_placeholder}" value="${tcEsc(kw.keyword||'')}" data-i="${i}" />
-          <div class="swatch${kw.color?'':' no-col'}" style="background:${kw.color||'#4CAF50'}">
+          <div class="swatch${kw.color?'':' no-col'}" style="background:${kw.color||'transparent'}">
             <input type="color" class="cpick kw-cpick" value="${kw.color||'#4CAF50'}" data-i="${i}" />
           </div>
           <button class="rm-btn kw-rm" data-i="${i}">
@@ -215,17 +224,33 @@ class TimetableCardEditor extends HTMLElement {
             <button class="seg-sm${kw.color_mode==='border'?' on':''}" data-i="${i}" data-v="border">${t.kw_border}</button>
           </div>
         </div>
-        <div class="kw-r3">
-          <span class="kw-rlbl">${t.kw_rename_label}</span>
-          <input class="kw-rename" placeholder="${t.kw_rename_ph}" value="${tcEsc(kw.rename||'')}" data-i="${i}" />
+        <div class="kw-r2b">
+          <button class="kw-tog${renameOn?' on':''}" data-i="${i}" data-type="rename">${t.kw_rename_btn}</button>
+          ${renameOn ? `<button class="kw-tog${partialOn?' on':''}" data-i="${i}" data-type="partial">${t.kw_partial_btn}</button>` : ''}
         </div>
-      </div>`).join('');
+        ${renameOn ? `
+        <div class="kw-r3">
+          ${partialOn ? `
+          <div class="kw-partial-wrap">
+            <div class="kw-seg kw-pseg">
+              <button class="seg-sm${partMode==='keyword'?' on':''}" data-i="${i}" data-pv="keyword">${t.kw_partial_kw}</button>
+              <button class="seg-sm${partMode==='text'?' on':''}" data-i="${i}" data-pv="text">${t.kw_partial_text}</button>
+            </div>
+            ${partMode==='text' ? `<input class="kw-rename" placeholder="${t.kw_partial_ph}" value="${tcEsc(kw.partial_rename_text||'')}" data-i="${i}" data-field="partial_rename_text" />` : ''}
+          </div>` : ''}
+          <div class="kw-rename-row">
+            <span class="kw-rlbl">${t.kw_rename_label}</span>
+            <input class="kw-rename" placeholder="${t.kw_rename_ph}" value="${tcEsc(kw.rename||'')}" data-i="${i}" data-field="rename" />
+          </div>
+        </div>` : ''}
+      </div>`;
+    }).join('');
 
     el.querySelectorAll('.kw-in').forEach(e => {
       e.addEventListener('change', ev => this._setKw(+e.dataset.i, 'keyword', ev.target.value));
     });
-    el.querySelectorAll('.kw-rename').forEach(e => {
-      e.addEventListener('change', ev => this._setKw(+e.dataset.i, 'rename', ev.target.value));
+    el.querySelectorAll('.kw-rename[data-field]').forEach(e => {
+      e.addEventListener('change', ev => this._setKw(+e.dataset.i, e.dataset.field, ev.target.value));
     });
     el.querySelectorAll('.kw-cpick').forEach(e => {
       e.addEventListener('change', ev => {
@@ -238,8 +263,28 @@ class TimetableCardEditor extends HTMLElement {
     el.querySelectorAll('.kw-chk').forEach(e => {
       e.addEventListener('change', ev => this._setKw(+e.dataset.i, e.dataset.k, ev.target.checked));
     });
-    el.querySelectorAll('.seg-sm').forEach(b => {
+    el.querySelectorAll('.seg-sm[data-v]').forEach(b => {
       b.addEventListener('click', () => this._setKw(+b.dataset.i, 'color_mode', b.dataset.v));
+    });
+    el.querySelectorAll('.seg-sm[data-pv]').forEach(b => {
+      b.addEventListener('click', () => this._setKw(+b.dataset.i, 'partial_rename_mode', b.dataset.pv));
+    });
+    el.querySelectorAll('.kw-tog[data-type="rename"]').forEach(b => {
+      b.addEventListener('click', () => {
+        const cur = this._config.keywords[+b.dataset.i];
+        const newVal = !cur.rename_enabled;
+        const a = [...this._config.keywords];
+        a[+b.dataset.i] = { ...cur, rename_enabled: newVal, partial_rename_enabled: newVal ? cur.partial_rename_enabled : false };
+        this._set('keywords', a);
+      });
+    });
+    el.querySelectorAll('.kw-tog[data-type="partial"]').forEach(b => {
+      b.addEventListener('click', () => {
+        const cur = this._config.keywords[+b.dataset.i];
+        const a = [...this._config.keywords];
+        a[+b.dataset.i] = { ...cur, partial_rename_enabled: !cur.partial_rename_enabled };
+        this._set('keywords', a);
+      });
     });
     el.querySelectorAll('.kw-rm').forEach(e => {
       e.addEventListener('click', () => this._rmKw(+e.dataset.i));
@@ -271,7 +316,7 @@ class TimetableCardEditor extends HTMLElement {
     this._rendered = true;
     const c   = this._config;
     const t   = tcS(this._hass);
-    const ppm = c.px_per_min || 3.6;
+    const ppm = c.px_per_min || 1.4;
 
     this.shadowRoot.innerHTML = `
 <style>
@@ -306,14 +351,21 @@ ha-switch{flex-shrink:0}
 .kw-in{flex:1;min-width:0;border:1px solid var(--divider-color,rgba(0,0,0,.14));border-radius:8px;background:var(--secondary-background-color,rgba(0,0,0,.03));padding:6px 10px;font-size:13.5px;color:var(--primary-text-color);outline:none;font-family:inherit}
 .kw-in:focus{border-color:var(--primary-color,#03a9f4)}
 .kw-r2{display:flex;align-items:center;gap:8px;padding:0 10px 8px;flex-wrap:wrap}
-.kw-r3{display:flex;align-items:center;gap:8px;padding:8px 10px 9px;border-top:1px solid var(--divider-color,rgba(0,0,0,.06))}
+.kw-r2b{display:flex;align-items:center;gap:6px;padding:0 10px 8px;flex-wrap:wrap}
+.kw-tog{padding:4px 11px;border-radius:20px;border:1.5px solid var(--divider-color,rgba(0,0,0,.16));background:none;color:var(--secondary-text-color);font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .15s}
+.kw-tog.on{background:rgba(var(--rgb-primary-color,3,169,244),.12);border-color:var(--primary-color,#03a9f4);color:var(--primary-color,#03a9f4)}
+.kw-r3{display:flex;flex-direction:column;gap:6px;padding:8px 10px 9px;border-top:1px solid var(--divider-color,rgba(0,0,0,.06))}
+.kw-partial-wrap{display:flex;flex-direction:column;gap:6px}
+.kw-pseg{align-self:flex-start}
+.kw-rename-row{display:flex;align-items:center;gap:8px}
 .kw-rlbl{font-size:11px;font-weight:600;color:var(--secondary-text-color);opacity:.7;white-space:nowrap;flex-shrink:0}
 .kw-rename{flex:1;min-width:0;border:1px solid var(--divider-color,rgba(0,0,0,.14));border-radius:8px;background:var(--secondary-background-color,rgba(0,0,0,.03));padding:5px 9px;font-size:13px;color:var(--primary-text-color);outline:none;font-family:inherit}
 .kw-rename:focus{border-color:var(--primary-color,#03a9f4)}
-.kw-pill{display:flex;align-items:center;gap:4px;cursor:pointer;user-select:none;padding:4px 9px;border-radius:20px;border:1.5px solid var(--divider-color,rgba(0,0,0,.14));font-size:12px;font-weight:500;color:var(--secondary-text-color);transition:all .14s}
+label.kw-pill{display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border-radius:20px;border:1.5px solid var(--divider-color,rgba(0,0,0,.16));cursor:pointer;font-size:12.5px;font-weight:500;color:var(--secondary-text-color);font-family:inherit;transition:all .15s;user-select:none}
 .kw-pill:has(input:checked){background:rgba(var(--rgb-primary-color,3,169,244),.12);border-color:var(--primary-color,#03a9f4);color:var(--primary-color,#03a9f4)}
 .kw-pill input{display:none}
 .kw-seg{display:flex;background:var(--secondary-background-color,rgba(120,120,128,.14));border-radius:8px;padding:2px;gap:1px;margin-left:auto}
+.kw-r2b .kw-seg{margin-left:0}
 .seg-sm{padding:3px 10px;border-radius:6px;border:none;background:none;font-size:11.5px;font-weight:500;cursor:pointer;color:var(--secondary-text-color);font-family:inherit;transition:all .14s;white-space:nowrap}
 .seg-sm.on{background:var(--card-background-color,#fff);color:var(--primary-text-color);box-shadow:0 1px 3px rgba(0,0,0,.12)}
 .kw-footer{padding:8px 15px 10px;border-top:1px solid var(--divider-color,rgba(0,0,0,.06))}
@@ -380,7 +432,7 @@ ha-switch{flex-shrink:0}
   </div>
   <div class="row">
     <div><div class="rl">${t.des_ppm}</div><div class="rs">${t.des_ppm_sub}</div></div>
-    <input type="number" class="num-in" id="ppm-in" min="1" max="20" step="0.5" value="${ppm}" />
+    <input type="number" class="num-in" id="ppm-in" min="1" max="20" step="0.1" value="${ppm}" />
   </div>
 </div>
 
@@ -419,7 +471,7 @@ ha-switch{flex-shrink:0}
     s.getElementById('sw-notes').addEventListener('change', e => this._set('show_notes', e.target.checked));
     s.getElementById('time-int').addEventListener('change', e => this._set('time_interval', e.target.value));
     s.getElementById('ref-int').addEventListener('change', e => this._set('refresh_interval', e.target.value));
-    s.getElementById('ppm-in').addEventListener('change', e => this._set('px_per_min', parseFloat(e.target.value) || 3.6));
+    s.getElementById('ppm-in').addEventListener('change', e => this._set('px_per_min', parseFloat(e.target.value) || 1.4));
     s.querySelectorAll('.seg-o').forEach(b => b.addEventListener('click', () => this._set('time_position', b.dataset.v)));
 
     this._renderEntityList();
@@ -446,6 +498,7 @@ class TimetableCard extends HTMLElement {
     this._clockTimer   = null;
     this._refreshTimer = null;
     this._lastFetchKey = null;
+    this._popup        = null;
   }
 
   static getConfigElement() { return document.createElement('timetable-card-editor'); }
@@ -488,6 +541,7 @@ class TimetableCard extends HTMLElement {
   disconnectedCallback() {
     clearInterval(this._clockTimer);
     clearInterval(this._refreshTimer);
+    this._closePopup();
   }
 
   _setupRefresh() {
@@ -563,6 +617,14 @@ class TimetableCard extends HTMLElement {
   }
   _toMin(d) { return d.getHours() * 60 + d.getMinutes(); }
   _fmt(m)   { return `${String(Math.floor(m/60)).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`; }
+  _fmtDate(d) {
+    const t = tcS(this._hass);
+    const days = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
+    const dow = days[d.getDay()];
+    const dayIdx = ['monday','tuesday','wednesday','thursday','friday','saturday','sunday'].indexOf(dow);
+    const dayName = dayIdx >= 0 ? (t.days_long?.[dayIdx] || t.days?.[dayIdx]?.short || '') : '';
+    return `${dayName}${dayName ? ', ' : ''}${d.getDate()}. ${t.months[d.getMonth()]} ${d.getFullYear()}`;
+  }
   _isToday(d) {
     const t = new Date();
     return d.getFullYear()===t.getFullYear() && d.getMonth()===t.getMonth() && d.getDate()===t.getDate();
@@ -578,6 +640,23 @@ class TimetableCard extends HTMLElement {
     const d1 = new Date(d0); d1.setDate(d0.getDate()+1);
     return s < d1 && e > d0;
   }
+
+  _applyRename(ev, kwRule) {
+    if (!kwRule || !kwRule.rename_enabled || !kwRule.rename) return null;
+    const title = ev.summary || '';
+    if (!kwRule.partial_rename_enabled) return kwRule.rename;
+    const mode = kwRule.partial_rename_mode || 'keyword';
+    if (mode === 'keyword') {
+      const re = new RegExp(kwRule.keyword.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'), 'gi');
+      return title.replace(re, kwRule.rename);
+    }
+    if (mode === 'text' && kwRule.partial_rename_text) {
+      const re = new RegExp(kwRule.partial_rename_text.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'), 'gi');
+      return title.replace(re, kwRule.rename);
+    }
+    return kwRule.rename;
+  }
+
   _matchKw(ev) {
     const title = ev.summary || '';
     const desc  = (ev.description || '').replace(/<[^>]+>/g, '');
@@ -594,6 +673,10 @@ class TimetableCard extends HTMLElement {
   _entityColor(ev) {
     const ent = this._getEntities().find(e => e.id === ev._entityId);
     return ent?.color || null;
+  }
+  _eventColor(ev) {
+    const kwRule = this._matchKw(ev);
+    return kwRule?.color || this._entityColor(ev) || null;
   }
   _boundaries(timedEvs) {
     const set = new Set();
@@ -634,6 +717,84 @@ class TimetableCard extends HTMLElement {
     });
   }
 
+  // ── Popup ────────────────────────────────────────────────────────
+  _openPopup(ev) {
+    this._closePopup();
+    const t = tcS(this._hass);
+    const kwRule = this._matchKw(ev);
+    const accentColor = this._eventColor(ev) || 'var(--primary-color,#03a9f4)';
+    const title = this._applyRename(ev, kwRule) || ev.summary || t.no_title;
+    const s = this._edt(ev,'start'), e = this._edt(ev,'end');
+    const loc = (ev.location || '').trim();
+    const rawDesc = (ev.description || '').replace(/<[^>]+>/g,'').trim();
+    const calId = ev._entityId || '';
+
+    let timeStr = '';
+    if (this._isAllDay(ev)) {
+      timeStr = t.all_day;
+    } else if (s && e) {
+      const sDate = this._fmtDate(s);
+      const eDate = this._fmtDate(e);
+      if (sDate === eDate) {
+        timeStr = `${sDate}<br>${this._fmt(this._toMin(s))} – ${this._fmt(this._toMin(e))}`;
+      } else {
+        timeStr = `${sDate} ${this._fmt(this._toMin(s))} – ${eDate} ${this._fmt(this._toMin(e))}`;
+      }
+    }
+
+    let rows = '';
+    if (timeStr) rows += `<div class="pd-row"><div class="pd-ico">🕐</div><div class="pd-val">${timeStr}</div></div>`;
+    if (loc)     rows += `<div class="pd-row"><div class="pd-ico">📍</div><div class="pd-val">${tcEsc(loc)}</div></div>`;
+    if (rawDesc) rows += `<div class="pd-row"><div class="pd-ico">📝</div><div class="pd-val pd-desc">${tcEsc(rawDesc)}</div></div>`;
+    if (calId)   rows += `<div class="pd-row"><div class="pd-ico">📅</div><div class="pd-val pd-cal">${tcEsc(calId)}</div></div>`;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'tc-popup-overlay';
+    overlay.innerHTML = `
+      <style>
+        .tc-popup-overlay{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.38);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);animation:pfadeIn .18s ease}
+        @keyframes pfadeIn{from{opacity:0}to{opacity:1}}
+        .tc-popup{background:var(--card-background-color,#fff);border-radius:18px;width:min(92vw,360px);max-height:80vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,.28);animation:pslideUp .2s cubic-bezier(.34,1.26,.64,1)}
+        @keyframes pslideUp{from{transform:translateY(18px);opacity:0}to{transform:translateY(0);opacity:1}}
+        .tc-popup-bar{width:4px;flex-shrink:0;background:${accentColor};border-radius:0 0 0 18px}
+        .tc-popup-inner{display:flex;flex:1;overflow:hidden}
+        .tc-popup-body{flex:1;overflow-y:auto;padding:18px 18px 18px 14px}
+        .tc-popup-title{font-size:17px;font-weight:700;letter-spacing:-.3px;color:var(--primary-text-color);line-height:1.3;margin-bottom:14px}
+        .pd-row{display:flex;align-items:flex-start;gap:10px;margin-bottom:10px}
+        .pd-row:last-child{margin-bottom:0}
+        .pd-ico{font-size:15px;flex-shrink:0;margin-top:1px;width:18px;text-align:center}
+        .pd-val{font-size:13.5px;color:var(--primary-text-color);line-height:1.5;word-break:break-word}
+        .pd-desc{color:var(--secondary-text-color);font-size:13px;white-space:pre-wrap}
+        .pd-cal{color:var(--secondary-text-color);font-size:12px;opacity:.65}
+        .tc-popup-close{position:absolute;top:12px;right:12px;background:var(--secondary-background-color,rgba(120,120,128,.15));border:none;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--secondary-text-color);transition:background .15s}
+        .tc-popup-close:hover{background:var(--secondary-background-color,rgba(120,120,128,.25))}
+        .tc-popup-wrap{position:relative}
+      </style>
+      <div class="tc-popup-wrap">
+        <div class="tc-popup">
+          <div class="tc-popup-inner">
+            <div class="tc-popup-bar"></div>
+            <div class="tc-popup-body">
+              <div class="tc-popup-title">${tcEsc(title)}</div>
+              ${rows}
+            </div>
+          </div>
+        </div>
+        <button class="tc-popup-close" id="tc-pop-close">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </div>`;
+
+    overlay.addEventListener('click', ev => { if (ev.target === overlay) this._closePopup(); });
+    overlay.querySelector('#tc-pop-close').addEventListener('click', () => this._closePopup());
+    document.body.appendChild(overlay);
+    this._popup = overlay;
+  }
+
+  _closePopup() {
+    if (this._popup) { this._popup.remove(); this._popup = null; }
+  }
+
   _render() {
     const t        = tcS(this._hass);
     const days     = this._weekDays(t);
@@ -641,7 +802,7 @@ class TimetableCard extends HTMLElement {
     const now      = new Date();
     const weekNum  = this._weekNum(monday);
     const timeLeft = this._config.time_position !== 'right';
-    const ppm      = parseFloat(this._config.px_per_min) || 3.6;
+    const ppm      = parseFloat(this._config.px_per_min) || 1.4;
 
     const allDayEvs = this._events.filter(ev =>  this._isAllDay(ev));
     const timedEvs  = this._events.filter(ev => !this._isAllDay(ev));
@@ -656,6 +817,8 @@ class TimetableCard extends HTMLElement {
       timedEvs.filter(ev => { const s = this._edt(ev,'start'); return s && s.toDateString()===day.date.toDateString(); })
     );
 
+    const isCurrentWeek = this._weekOffset === 0;
+
     const css = `
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :host{display:block;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Roboto',sans-serif;-webkit-font-smoothing:antialiased}
@@ -668,6 +831,9 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px)}
 .nav-grp{display:flex;align-items:center;gap:1px}
 .nav-btn{background:none;border:none;cursor:pointer;color:var(--secondary-text-color);padding:5px 9px;border-radius:8px;font-size:15px;font-weight:700;line-height:1;display:flex;align-items:center;transition:background .14s,color .14s;font-family:inherit}
 .nav-btn:hover{background:var(--secondary-background-color,rgba(0,0,0,.06));color:var(--primary-text-color)}
+.today-btn{background:none;border:1.5px solid var(--divider-color,rgba(0,0,0,.16));cursor:pointer;color:var(--secondary-text-color);padding:4px 9px;border-radius:7px;font-size:11px;font-weight:600;line-height:1;display:flex;align-items:center;transition:background .14s,color .14s,border-color .14s;font-family:inherit;white-space:nowrap}
+.today-btn:hover{background:var(--secondary-background-color,rgba(0,0,0,.06));color:var(--primary-text-color)}
+.today-btn.active{border-color:var(--primary-color,#03a9f4);color:var(--primary-color,#03a9f4);background:rgba(var(--rgb-primary-color,3,169,244),.08)}
 .ico-btn{background:none;border:none;cursor:pointer;color:var(--secondary-text-color);padding:6px;border-radius:8px;display:flex;align-items:center;opacity:.5;transition:opacity .15s,background .15s}
 .ico-btn:hover{opacity:1;background:var(--secondary-background-color,rgba(0,0,0,.05))}
 .ico-btn.spin svg{animation:spin .8s linear infinite}
@@ -681,7 +847,8 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px)}
 .allday-days{flex:1;display:flex}
 .allday-col{flex:1;min-width:0;padding:4px 3px;border-left:1px solid var(--divider-color,rgba(0,0,0,.06));display:flex;flex-direction:column;gap:2px}
 .allday-col:first-child{border-left:none}
-.allday-chip{font-size:9px;font-weight:600;padding:2px 5px;border-radius:5px;background:rgba(var(--rgb-primary-color,3,169,244),.12);color:var(--primary-color,#03a9f4);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.5}
+.allday-chip{font-size:9px;font-weight:600;padding:2px 5px;border-radius:5px;background:rgba(var(--rgb-primary-color,3,169,244),.12);color:var(--primary-color,#03a9f4);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.5;cursor:pointer}
+.allday-chip:hover{opacity:.8}
 .day-hdrs{display:flex;border-bottom:1px solid var(--divider-color,rgba(0,0,0,.07));background:var(--card-background-color);position:sticky;top:0;z-index:9}
 .time-sp{width:${TIME_W}px;flex-shrink:0}
 .day-hdr{flex:1;min-width:0;text-align:center;padding:7px 3px 6px;border-left:1px solid var(--divider-color,rgba(0,0,0,.06))}
@@ -702,7 +869,7 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px)}
 .g-line{position:absolute;left:0;right:0;height:1px;background:var(--divider-color,rgba(0,0,0,.04));pointer-events:none}
 .now-line{position:absolute;left:-1px;right:-1px;height:2px;background:var(--primary-color,#03a9f4);z-index:7;border-radius:1px;pointer-events:none}
 .now-dot{position:absolute;left:-4px;top:-3px;width:8px;height:8px;border-radius:50%;background:var(--primary-color,#03a9f4)}
-.ev{position:absolute;border-radius:8px;padding:5px 7px 5px 10px;overflow:hidden;cursor:default;z-index:1;display:flex;flex-direction:column;justify-content:flex-start;background:rgba(var(--rgb-primary-color,3,169,244),.08);border-left:3px solid rgba(var(--rgb-primary-color,3,169,244),.45);transition:transform .15s ease,box-shadow .15s ease;will-change:transform}
+.ev{position:absolute;border-radius:8px;padding:5px 7px 5px 10px;overflow:hidden;cursor:pointer;z-index:1;display:flex;flex-direction:column;justify-content:flex-start;background:rgba(var(--rgb-primary-color,3,169,244),.08);border-left:3px solid rgba(var(--rgb-primary-color,3,169,244),.45);transition:transform .15s ease,box-shadow .15s ease;will-change:transform}
 .ev:hover{z-index:5;transform:scale(1.022) translateZ(0);box-shadow:0 4px 16px rgba(0,0,0,.12)}
 .ev.now{z-index:3;transform:scale(1.03) translateZ(0);box-shadow:0 7px 22px rgba(0,0,0,.14)}
 .ev.now:hover{z-index:6;transform:scale(1.048) translateZ(0)}
@@ -725,6 +892,7 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px)}
       </div>
       <div class="nav-grp">
         <button class="nav-btn" id="prev-btn" title="${t.prev_week}">&lt;</button>
+        <button class="today-btn${isCurrentWeek?' active':''}" id="today-btn" title="${t.today_btn}">${t.today_btn}</button>
         <button class="nav-btn" id="next-btn" title="${t.next_week}">&gt;</button>
       </div>
       <button class="ico-btn${this._loading?' spin':''}" id="ref-btn" title="${t.refresh}">
@@ -760,8 +928,9 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px)}
           if (kwRule?.hidden) return '';
           const col = kwRule?.color || this._entityColor(ev);
           const sty = col ? `background:${col}22;color:${col}` : '';
-          const label = kwRule?.rename || ev.summary || t.all_day;
-          return `<div class="allday-chip" style="${sty}">${tcEsc(label)}</div>`;
+          const renamed = this._applyRename(ev, kwRule);
+          const label = renamed || ev.summary || t.all_day;
+          return `<div class="allday-chip" style="${sty}" data-evid="${tcEsc(JSON.stringify({s:ev.start,e:ev.end,sum:ev.summary,loc:ev.location,desc:ev.description,eid:ev._entityId}))}">${tcEsc(label)}</div>`;
         }).join('');
         return `<div class="allday-col">${chips}</div>`;
       }).join('');
@@ -785,7 +954,6 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px)}
       return `<div class="t-lbl" style="top:${top}px">${this._fmt(m)}</div>`;
     }).join('');
 
-    const isCurrentWeek = this._weekOffset === 0;
     const nowMin = this._toMin(now);
     const showNow = isCurrentWeek && nowMin >= minT && nowMin <= maxT;
     const nowTop  = (nowMin - minT) * ppm + PADDING_TOP;
@@ -813,7 +981,8 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px)}
         const baseCol = kwRule?.color || this._entityColor(ev);
         const rgb     = baseCol ? tcRgb(baseCol) : null;
         const mode    = kwRule?.color ? (kwRule.color_mode || 'block') : (this._entityColor(ev) ? 'block' : null);
-        const displayTitle = kwRule?.rename || ev.summary || t.no_title;
+        const renamed = this._applyRename(ev, kwRule);
+        const displayTitle = renamed || ev.summary || t.no_title;
         const loc      = (ev.location || '').trim();
         const rawNotes = (ev.description || '').replace(/<[^>]+>/g,'').trim();
         const showLoc  = this._config.show_location !== false && loc;
@@ -831,7 +1000,8 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px)}
         } else if (isCurr) {
           sty += `background:rgba(var(--rgb-primary-color,3,169,244),.13);border-left-color:var(--primary-color,#03a9f4);`;
         }
-        return `<div class="ev${isCurr?' now':''}" style="${sty}" title="${tcEsc(displayTitle)}${loc?'\n📍 '+loc:''}${rawNotes?'\n📝 '+rawNotes.substring(0,100):''}">
+        const evData = JSON.stringify({ s: ev.start, e: ev.end, sum: ev.summary, loc: ev.location, desc: ev.description, eid: ev._entityId });
+        return `<div class="ev${isCurr?' now':''}" style="${sty}" data-ev="${tcEsc(evData)}">
           ${isCurr?`<div class="now-badge"></div>`:''}
           <div class="ev-title">${tcEsc(displayTitle)}</div>
           ${showLoc?`<div class="ev-loc">📍 ${tcEsc(loc)}</div>`:''}
@@ -852,6 +1022,7 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px)}
     </ha-card>`;
 
     this._bindNav();
+    this._bindEvents();
   }
 
   _bindNav() {
@@ -862,8 +1033,41 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px)}
     s.getElementById('next-btn')?.addEventListener('click', () => {
       this._weekOffset++; this._lastFetchKey = null; this._fetchEvents(); this._render();
     });
+    s.getElementById('today-btn')?.addEventListener('click', () => {
+      if (this._weekOffset === 0) return;
+      this._weekOffset = 0; this._lastFetchKey = null; this._fetchEvents(); this._render();
+    });
     s.getElementById('ref-btn')?.addEventListener('click', () => {
       this._lastFetchKey = null; this._fetchEvents();
+    });
+  }
+
+  _bindEvents() {
+    this.shadowRoot.querySelectorAll('.ev[data-ev]').forEach(el => {
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        try {
+          const raw = JSON.parse(el.dataset.ev);
+          const synthetic = {
+            start: raw.s, end: raw.e, summary: raw.sum,
+            location: raw.loc, description: raw.desc, _entityId: raw.eid
+          };
+          this._openPopup(synthetic);
+        } catch {}
+      });
+    });
+    this.shadowRoot.querySelectorAll('.allday-chip[data-evid]').forEach(el => {
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        try {
+          const raw = JSON.parse(el.dataset.evid);
+          const synthetic = {
+            start: raw.s, end: raw.e, summary: raw.sum,
+            location: raw.loc, description: raw.desc, _entityId: raw.eid
+          };
+          this._openPopup(synthetic);
+        } catch {}
+      });
     });
   }
 }

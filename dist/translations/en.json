@@ -8,11 +8,13 @@
     { "short": "Sa" },
     { "short": "Su" }
   ],
+  "days_long": ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"],
   "months": ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"],
   "card_title":           "Timetable",
   "week_prefix":          "Wk",
   "prev_week":            "Previous week",
   "next_week":            "Next week",
+  "today_btn":            "Today",
   "refresh":              "Refresh",
   "all_day":              "All day",
   "no_title":             "No title",
@@ -35,8 +37,13 @@
   "kw_hide":              "Hide",
   "kw_block":             "Block",
   "kw_border":            "Border",
-  "kw_rename_label":      "Rename",
+  "kw_rename_btn":        "Rename",
+  "kw_partial_btn":       "Partial renaming",
+  "kw_rename_label":      "Rename to",
   "kw_rename_ph":         "Empty = no rename",
+  "kw_partial_kw":        "Replace keyword",
+  "kw_partial_text":      "Replace text",
+  "kw_partial_ph":        "Text to replace…",
   "kw_add":               "Add keyword",
   "disp_weekdays":        "Weekdays",
   "disp_loc":             "Show location",
@@ -61,5 +68,7 @@
   "ref_60":   "1 hour",
   "ref_120":  "2 hours",
   "ref_180":  "3 hours",
-  "ref_360":  "6 hours"
+  "ref_360":  "6 hours",
+  "popup_calendar":       "Calendar",
+  "popup_close":          "Close"
 }
