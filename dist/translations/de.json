@@ -8,11 +8,13 @@
     { "short": "Sa" },
     { "short": "So" }
   ],
+  "days_long": ["Montag","Dienstag","Mittwoch","Donnerstag","Freitag","Samstag","Sonntag"],
   "months": ["Jan","Feb","Mär","Apr","Mai","Jun","Jul","Aug","Sep","Okt","Nov","Dez"],
   "card_title":           "Stundenplan",
   "week_prefix":          "KW",
   "prev_week":            "Vorherige Woche",
   "next_week":            "Nächste Woche",
+  "today_btn":            "Heute",
   "refresh":              "Aktualisieren",
   "all_day":              "Ganztägig",
   "no_title":             "Kein Titel",
@@ -35,8 +37,13 @@
   "kw_hide":              "Ausblenden",
   "kw_block":             "Block",
   "kw_border":            "Rand",
-  "kw_rename_label":      "Umbenennen",
+  "kw_rename_btn":        "Umbenennen",
+  "kw_partial_btn":       "Teilweises umbenennen",
+  "kw_rename_label":      "Umbenennen in",
   "kw_rename_ph":         "Leer = kein Umbenennen",
+  "kw_partial_kw":        "Keyword ersetzen",
+  "kw_partial_text":      "Text ersetzen",
+  "kw_partial_ph":        "Zu ersetzender Text…",
   "kw_add":               "Schlüsselwort hinzufügen",
   "disp_weekdays":        "Wochentage",
   "disp_loc":             "Ort anzeigen",
@@ -61,5 +68,7 @@
   "ref_60":   "1 Stunde",
   "ref_120":  "2 Stunden",
   "ref_180":  "3 Stunden",
-  "ref_360":  "6 Stunden"
+  "ref_360":  "6 Stunden",
+  "popup_calendar":       "Kalender",
+  "popup_close":          "Schließen"
 }
