@@ -17,8 +17,11 @@ A custom Home Assistant Lovelace card that displays calendar events in a weekly 
 * 🗓️ **Weekly timetable view** — shows events from one or multiple calendar entities in a clear weekly layout
 * 🎨 **Custom entity colors** — set a different color for each calendar entity
 * 🔑 **Keyword-based rules** — change colors, hide events, or rename them based on keywords
+* ✏️ **Partial renaming** — replace only the keyword or a custom text string within event titles
 * 📅 **All-day events** — displayed separately above the regular timetable
 * ↔️ **Week navigation** — switch between weeks using the arrows in the header
+* 🏠 **Today button** — jump back to the current week with one tap
+* 🔍 **Event detail popup** — tap any event to see all details like name, time, location,...
 * ⏱️ **Flexible time grid** — choose between an event-based or fixed time interval layout
 * 📏 **Adjustable event size** — customize the height of events with pixels-per-minute settings
 * 🔀 **Overlap support** — overlapping events are shown side by side
@@ -36,6 +39,8 @@ A custom Home Assistant Lovelace card that displays calendar events in a weekly 
 ## Installation
 
 ### HACS (recommended)
+
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=KingDando8430&repository=HA-Timetable-Card&category=plugin)
 
 1. Open HACS → Frontend → **Custom repositories**
 2. Add [`https://github.com/KingDando8430/timetable-card`](https://github.com/KingDando8430/HA-Timetable-Card) as type **Dashboard**
@@ -106,7 +111,7 @@ keywords:
 | `show_notes` | `true` | Show event description as third line |
 | `time_position` | `left` | Time axis position: `left` or `right` |
 | `time_interval` | `event_based` | Grid lines: `event_based`, `15`, `30`, `60` |
-| `px_per_min` | `3.6` | Pixel height per minute (controls zoom level) |
+| `px_per_min` | `1.4` | Pixel height per minute (controls zoom level) |
 | `refresh_interval` | `auto` | Reload interval: `auto`, `5`, `10`, `15`, `30`, `60`, `120`, `180`, `360` minutes |
 | `keywords` | `[]` | Keyword rules (see below) |
 
@@ -119,7 +124,10 @@ keywords:
 | `exact_match` | `true` | `true` = exact title match, `false` = contains match |
 | `color_mode` | `block` | `block` = filled background, `border` = left border only |
 | `hidden` | `false` | Hide matching events completely |
-| `rename` | `""` | Override displayed label (empty = no rename) |
+| `rename` | `""` | 	Override displayed label (empty = no rename) |
+| `partial_rename_enabled` | `false` | Replace only a part of the label instead of the whole label |
+| `partial_rename_mode` | `keyword` | `keyword` = replaces the keyword in the label, `text` = replaces a custom string |
+| `partial_rename_text` | `""` | The specific text to replace when `partial_rename_mode` is `text` |
 
 ---
 
