@@ -68,6 +68,15 @@ body { min-height: 100vh; }
 }
 .topbar h1 span { color: var(--muted); font-weight: 400; }
 
+.topbar-version {
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+  letter-spacing: .2px;
+  white-space: nowrap;
+}
+
 /* ─── Main layout ─── */
 /* Desktop: side-by-side. Mobile: stacked. */
 .layout {
@@ -400,6 +409,54 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 3px; }
   color: var(--muted);
 }
 
+/* ─── Rename sub-section ─── */
+.rename-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: rgba(0,0,0,.18);
+  border-radius: var(--r-sm);
+  border: 1px solid rgba(255,255,255,.06);
+}
+
+.rename-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  align-items: start;
+}
+
+/* Segmented control */
+.seg-ctrl {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+  background: var(--surface2);
+}
+.seg-ctrl button {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 7px 8px;
+  cursor: pointer;
+  transition: background .12s, color .12s;
+  white-space: nowrap;
+}
+.seg-ctrl button.active {
+  background: var(--accent);
+  color: #fff;
+}
+.seg-ctrl button:not(.active):hover {
+  background: var(--accent-dim);
+  color: var(--text);
+}
+
 /* ─── Mobile tweaks ─── */
 @media (max-width: 480px) {
   .weekday-grid { gap: 4px; }
@@ -419,6 +476,7 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 3px; }
     <svg viewBox="0 0 16 16"><rect x="1" y="1" width="6" height="6" rx="1.5"/><rect x="9" y="1" width="6" height="6" rx="1.5"/><rect x="1" y="9" width="6" height="6" rx="1.5"/><rect x="9" y="9" width="6" height="6" rx="1.5"/></svg>
   </div>
   <h1>Timetable Card &thinsp;<span>Config Builder</span></h1>
+  <span class="topbar-version">v1.2.0</span>
 </div>
 
 <div class="layout">
@@ -620,11 +678,12 @@ function addKeyword() {
   state.keywords.push({
     id: ++_kid,
     keyword:'',
-    useColor:false,     color:'#0a84ff',
-    useExact:false,     exact:'false',
-    useColorMode:false, colorMode:'block',
-    useHidden:false,    hidden:'true',
-    rename:'',
+    useColor:false,       color:'#0a84ff',
+    useExact:false,       exact:'false',
+    useColorMode:false,   colorMode:'block',
+    useHidden:false,      hidden:'true',
+    useRename:false,      rename:'',
+    usePartial:false,     partialMode:'keyword',  partialText:'',
   });
   renderUserKw();
   update();
@@ -640,7 +699,8 @@ function setKw(id, key, val) {
   const k = state.keywords.find(x => x.id === id);
   if (!k) return;
   k[key] = val;
-  const rerender = ['useColor','useExact','useColorMode','useHidden'].includes(key);
+  if (key === 'useRename' && !val) { k.usePartial = false; }
+  const rerender = ['useColor','useExact','useColorMode','useHidden','useRename','usePartial','partialMode'].includes(key);
   if (rerender) renderUserKw();
   update();
 }
@@ -650,7 +710,43 @@ function renderUserKw() {
   list.querySelectorAll('.kw-rule:not(.locked)').forEach(el => el.remove());
 
   state.keywords.forEach(k => {
-    const hasExtra = k.useColor || k.useExact || k.useColorMode || k.useHidden || k.rename.trim();
+    const hasExtra = k.useColor || k.useExact || k.useColorMode || k.useHidden || (k.useRename && k.rename.trim());
+
+    // Build rename block HTML
+    const renameBlockHtml = k.useRename ? `
+      <div class="rename-block">
+        <div class="rename-row">
+          <div>
+            <label class="field-label">Rename label</label>
+            <input type="text" placeholder="Display name" value="${xesc(k.rename)}"
+              oninput="setKw(${k.id},'rename',this.value)" />
+          </div>
+          <div>
+            <label class="cb-label" style="margin-bottom:8px">
+              <input type="checkbox" ${k.usePartial?'checked':''}
+                onchange="setKw(${k.id},'usePartial',this.checked)" />
+              Partial Renaming
+            </label>
+            ${k.usePartial ? `
+            <div class="seg-ctrl">
+              <button class="${k.partialMode==='keyword'?'active':''}"
+                onclick="setKw(${k.id},'partialMode','keyword')">Replace keyword</button>
+              <button class="${k.partialMode==='text'?'active':''}"
+                onclick="setKw(${k.id},'partialMode','text')">Replace custom text</button>
+            </div>` : `
+            <div class="seg-ctrl field-disabled">
+              <button class="active">Replace keyword</button>
+              <button>Replace custom text</button>
+            </div>`}
+          </div>
+        </div>
+        ${k.usePartial && k.partialMode === 'text' ? `
+        <div>
+          <label class="field-label">Text to replace</label>
+          <input type="text" placeholder="e.g. teacher" value="${xesc(k.partialText)}"
+            oninput="setKw(${k.id},'partialText',this.value)" />
+        </div>` : ''}
+      </div>` : '';
 
     const div = document.createElement('div');
     div.className = 'kw-rule';
@@ -720,12 +816,16 @@ function renderUserKw() {
         </div>
 
         <div class="full">
-          <label class="field-label">Rename <span style="color:var(--muted)">(optional)</span></label>
-          <input type="text" placeholder="Display name" value="${xesc(k.rename)}"
-            oninput="setKw(${k.id},'rename',this.value)" />
+          <label class="cb-label">
+            <input type="checkbox" ${k.useRename?'checked':''}
+              onchange="setKw(${k.id},'useRename',this.checked)" />
+            Rename
+          </label>
         </div>
 
       </div>
+
+      ${renameBlockHtml}
 
       <span class="kw-err${k.keyword && !hasExtra ? ' show':''}">
         At least one additional option must be set.
@@ -788,14 +888,19 @@ function buildLines() {
 
   state.keywords.forEach(k => {
     if (!k.keyword.trim()) return;
-    const hasExtra = k.useColor || k.useExact || k.useColorMode || k.useHidden || k.rename.trim();
+    const hasExtra = k.useColor || k.useExact || k.useColorMode || k.useHidden || (k.useRename && k.rename.trim());
     if (!hasExtra) return;
     kv(`  - keyword: ${k.keyword.trim()}`);
     if (k.useColor)     str(`    color: "${k.color}"`);
     if (k.useExact)     bool(`    exact_match: ${k.exact}`);
     if (k.useColorMode) val(`    color_mode: ${k.colorMode}`);
     if (k.useHidden)    bool(`    hidden: ${k.hidden}`);
-    if (k.rename.trim()) val(`    rename: ${k.rename.trim()}`);
+    if (k.useRename && k.usePartial) {
+      bool('    partial_rename_enabled: true');
+      val(`    partial_rename_mode: ${k.partialMode}`);
+      if (k.partialMode === 'text' && k.partialText.trim()) str(`    partial_rename_text: "${k.partialText.trim()}"`);
+    }
+    if (k.useRename && k.rename.trim()) val(`    rename: "${k.rename.trim()}"`);
   });
 
   return L;
