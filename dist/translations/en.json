@@ -38,7 +38,7 @@
   "kw_block":             "Block",
   "kw_border":            "Border",
   "kw_rename_btn":        "Rename",
-  "kw_partial_btn":       "Partial",
+  "kw_partial_btn":       "Partial renaming",
   "kw_rename_label":      "Rename to",
   "kw_rename_ph":         "Empty = no rename",
   "kw_partial_kw":        "Replace keyword",
