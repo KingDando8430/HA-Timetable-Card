@@ -541,7 +541,8 @@ const WD_LABELS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 
 const LOCKED = [
   { keyword:'cancelled', color:'#ff0000', exact_match: false },
-  { keyword:'change',    color:'#f5ec00', exact_match: false },
+  { keyword:'change',    color:'#21b15e', exact_match: false },
+  { keyword:'irregular', color:'#21b15e', exact_match: false },
 ];
 
 // ══════════════════════════════════════════════════
@@ -710,7 +711,7 @@ function renderUserKw() {
   list.querySelectorAll('.kw-rule:not(.locked)').forEach(el => el.remove());
 
   state.keywords.forEach(k => {
-    const hasExtra = k.useColor || k.useExact || k.useColorMode || k.useHidden || (k.useRename && k.rename.trim());
+    const hasExtra = k.useColor || k.useExact || k.useColorMode || k.useHidden || k.useRename;
 
     // Build rename block HTML
     const renameBlockHtml = k.useRename ? `
@@ -844,25 +845,14 @@ function renderUserKw() {
 // ══════════════════════════════════════════════════
 function buildLines() {
   const L = [];
-  const kv  = (raw) => L.push({ cls:'yk', raw });
-  const val  = (raw) => L.push({ cls:'yv', raw });
-  const str  = (raw) => L.push({ cls:'ys', raw });
-  const num  = (raw) => L.push({ cls:'yn', raw });
-  const bool = (raw) => L.push({ cls:'yb', raw });
+  const kv   = (raw) => L.push({ cls:'yk', raw });
+  const val   = (raw) => L.push({ cls:'yv', raw });
+  const str   = (raw) => L.push({ cls:'ys', raw });
+  const num   = (raw) => L.push({ cls:'yn', raw });
+  const bool  = (raw) => L.push({ cls:'yb', raw });
+  const snull = (raw) => L.push({ cls:'yb', raw });
 
-  // Fixed keys
-  kv('type: custom:timetable-card');
-  kv('time_position: left');
-  kv('show_location: true');
-  kv('show_notes: true');
-  kv('time_interval: event_based');
-  kv('px_per_min: 1.4');
-  kv('refresh_interval: auto');
-  kv('grid_options:');
-  val('  rows: auto');
-  val('  columns: full');
-
-  // Entities
+  // Entities first
   const validE = state.entities.filter(e => e.entityId.trim());
   if (validE.length) {
     kv('entities:');
@@ -872,14 +862,15 @@ function buildLines() {
     });
   }
 
-  // Weekdays
-  if (state.weekdays.length) {
-    kv('weekdays:');
-    state.weekdays.forEach(d => num(`  - ${d}`));
-  }
+  // Fixed config keys
+  kv('time_position: left');
+  kv('show_location: true');
+  kv('show_notes: true');
+  kv('time_interval: event_based');
+  kv('px_per_min: 1.4');
 
-  // Keyword rules
-  kv('keyword_rules:');
+  // Keywords block
+  kv('keywords:');
   LOCKED.forEach(r => {
     kv(`  - keyword: ${r.keyword}`);
     str(`    color: "${r.color}"`);
@@ -888,20 +879,38 @@ function buildLines() {
 
   state.keywords.forEach(k => {
     if (!k.keyword.trim()) return;
-    const hasExtra = k.useColor || k.useExact || k.useColorMode || k.useHidden || (k.useRename && k.rename.trim());
+    const hasExtra = k.useColor || k.useExact || k.useColorMode || k.useHidden || k.useRename;
     if (!hasExtra) return;
     kv(`  - keyword: ${k.keyword.trim()}`);
     if (k.useColor)     str(`    color: "${k.color}"`);
     if (k.useExact)     bool(`    exact_match: ${k.exact}`);
     if (k.useColorMode) val(`    color_mode: ${k.colorMode}`);
     if (k.useHidden)    bool(`    hidden: ${k.hidden}`);
-    if (k.useRename && k.usePartial) {
-      bool('    partial_rename_enabled: true');
-      val(`    partial_rename_mode: ${k.partialMode}`);
-      if (k.partialMode === 'text' && k.partialText.trim()) str(`    partial_rename_text: "${k.partialText.trim()}"`);
+    if (k.useRename) {
+      if (k.rename.trim()) val(`    rename: ${k.rename.trim()}`);
+      bool('    rename_enabled: true');
+      if (k.usePartial) {
+        bool('    partial_rename_enabled: true');
+        val(`    partial_rename_mode: ${k.partialMode}`);
+        if (k.partialMode === 'text' && k.partialText.trim()) str(`    partial_rename_text: "${k.partialText.trim()}"`);
+      }
     }
-    if (k.useRename && k.rename.trim()) val(`    rename: "${k.rename.trim()}"`);
   });
+
+  // Remaining fixed keys
+  kv('refresh_interval: auto');
+
+  // Weekdays
+  if (state.weekdays.length) {
+    kv('weekdays:');
+    state.weekdays.forEach(d => num(`  - ${d}`));
+  }
+
+  // Type + grid_options last
+  kv('type: custom:timetable-card');
+  kv('grid_options:');
+  val('  rows: auto');
+  val('  columns: full');
 
   return L;
 }
