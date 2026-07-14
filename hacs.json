@@ -1,7 +1,5 @@
 {
   "name": "Timetable Card",
-  "description": "Weekly timetable view for calendar entities.",
-  "category": "plugin",
   "render_readme": true,
   "content_in_root": false,
   "filename": "timetable-card.js",
