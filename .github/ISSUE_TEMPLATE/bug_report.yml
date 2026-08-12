@@ -1,0 +1,55 @@
+name: Bug report
+description: Report an issue.
+title: "[Bug] "
+labels: ["bug"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This issue form is for reporting bugs.
+        
+  - type: input
+    id: issue
+    attributes:
+      label: The Problem
+      description: Describe the issue you are experiencing here. Provide a clear and concise description of what the problem is.
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Card Configuration
+      description: Your card YAML configuration. Use "[redacted]" to censor sensitive informations.
+      render: yaml
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        ## Environment
+
+  - type: input
+    id: ha-version
+    attributes:
+      label: Version of Home Assistant
+      description: >
+        Can be found in: [Settings -> About](https://my.home-assistant.io/redirect/info/).
+    validations:
+      required: true
+
+  - type: input
+    id: card-version
+    attributes:
+      label: Version of Timetable Card
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and screenshots
+      description: Any relevant logs or screenshots that may help
+    validations:
+      required: false
