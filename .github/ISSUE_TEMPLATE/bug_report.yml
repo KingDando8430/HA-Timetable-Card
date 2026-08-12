@@ -34,7 +34,8 @@ body:
     id: ha-version
     attributes:
       label: Version of Home Assistant
-      description: Can be found in: [Settings -> About](https://my.home-assistant.io/redirect/info/).
+      description: >
+        Can be found in: [Settings -> About](https://my.home-assistant.io/redirect/info/).
     validations:
       required: true
 
