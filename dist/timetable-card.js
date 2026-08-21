@@ -2,10 +2,10 @@
 // Home Assistant Timetable Card
 // Author: KingDando8430
 // https://github.com/KingDando8430/HA-Timetable-Card
-// Version: 1.2.0
+// Version: 1.2.2
 // ═══════════════════════════════════════════════════════════════════
 
-const TC_VERSION = '1.2.0';
+const TC_VERSION = '1.2.2';
 
 window.customCards = window.customCards || [];
 window.customCards.push({
@@ -26,6 +26,27 @@ window.customCards.push({
 const TC_STRINGS_CACHE = {};
 const TC_STRINGS_FALLBACK = 'en';
 
+const TC_SAFE_DEFAULTS = {
+  days: [
+    { short: 'Mo' }, { short: 'Tu' }, { short: 'We' }, { short: 'Th' },
+    { short: 'Fr' }, { short: 'Sa' }, { short: 'Su' },
+  ],
+  days_long: ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'],
+  months: ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'],
+  card_title: 'Timetable',
+  week_prefix: 'Wk',
+  prev_week: 'Previous week',
+  next_week: 'Next week',
+  today_btn: 'Today',
+  refresh: 'Refresh',
+  all_day: 'All day',
+  no_title: 'No title',
+  state_no_entity: 'No calendar configured.',
+  state_no_entity_hint: 'Edit the card to select a calendar.',
+  state_loading: 'Loading calendar…',
+  state_no_events: 'No events this week',
+};
+
 async function tcLoadStrings(lang) {
   if (TC_STRINGS_CACHE[lang]) return TC_STRINGS_CACHE[lang];
   const base = new URL(import.meta.url).pathname.replace(/\/[^/]+$/, '');
@@ -41,8 +62,9 @@ async function tcLoadStrings(lang) {
 }
 
 function tcS(hass) {
-  const lang = hass?.locale?.language || hass?.language || TC_STRINGS_FALLBACK;
-  return TC_STRINGS_CACHE[lang] || TC_STRINGS_CACHE[TC_STRINGS_FALLBACK] || {};
+  const lang   = hass?.locale?.language || hass?.language || TC_STRINGS_FALLBACK;
+  const loaded = TC_STRINGS_CACHE[lang] || TC_STRINGS_CACHE[TC_STRINGS_FALLBACK];
+  return loaded ? { ...TC_SAFE_DEFAULTS, ...loaded } : TC_SAFE_DEFAULTS;
 }
 
 // ─── Constants ──────────────────────────────────────────────────────
@@ -493,6 +515,7 @@ class TimetableCard extends HTMLElement {
     this._events = [];
     this._loading = false;
     this._error   = null;
+    this._unavailable = false;
     this._hass    = null;
     this._weekOffset   = 0;
     this._clockTimer   = null;
@@ -531,11 +554,20 @@ class TimetableCard extends HTMLElement {
       const lang = h?.locale?.language || h?.language || TC_STRINGS_FALLBACK;
       tcLoadStrings(lang).then(() => {
         this._fetchEvents();
-        this._setupRefresh();
-        this._clockTimer = setInterval(() => this._render(), 30_000);
+        if (this.isConnected) {
+          this._setupRefresh();
+          this._clockTimer = setInterval(() => this._render(), 30_000);
+        }
         this._render();
       });
     }
+  }
+
+  connectedCallback() {
+    if (!this._hass) return;
+    clearInterval(this._clockTimer);
+    this._clockTimer = setInterval(() => this._render(), 30_000);
+    this._setupRefresh();
   }
 
   disconnectedCallback() {
@@ -582,9 +614,25 @@ class TimetableCard extends HTMLElement {
     return Math.ceil(((u - y1) / 86_400_000 + 1) / 7);
   }
 
+  _entityUsable(id) {
+    const st = this._hass?.states?.[id]?.state;
+    return st !== undefined && st !== 'unavailable' && st !== 'unknown';
+  }
+
   async _fetchEvents() {
-    const ents = this._getEntities();
-    if (!ents.length || !this._hass) return;
+    const allEnts = this._getEntities();
+    if (!allEnts.length || !this._hass) return;
+    const ents = allEnts.filter(e => this._entityUsable(e.id));
+    if (!ents.length) {
+      this._unavailable = true;
+      this._error = null;
+      this._events = [];
+      this._loading = false;
+      this._lastFetchKey = null;
+      this._render();
+      return;
+    }
+    this._unavailable = false;
     const { monday, end } = this._weekRange();
     const key = `${ents.map(e=>e.id).join(',')}|${monday.toISOString()}`;
     if (this._lastFetchKey === key) return;
@@ -905,6 +953,10 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px)}
     const ents = this._getEntities();
     if (!ents.length) {
       this.shadowRoot.innerHTML = `<style>${css}</style><ha-card>${hdrHTML}<div class="state"><div class="state-ico">📋</div>${t.state_no_entity}<br><small>${t.state_no_entity_hint}</small></div></ha-card>`;
+      this._bindNav(); return;
+    }
+    if (this._unavailable) {
+      this.shadowRoot.innerHTML = `<style>${css}</style><ha-card>${hdrHTML}<div class="state"><div class="state-ico">🔌</div>${t.state_unavailable}<br><small>${t.state_unavailable_hint}</small></div></ha-card>`;
       this._bindNav(); return;
     }
     if (this._loading && !this._events.length) {
