@@ -172,14 +172,7 @@ timetable-card/
 > This project is not affiliated with, endorsed, sponsored, or specifically approved by WebUntis.
 
 Timetable Card natively recognizes WebUntis devices.
-
-### WebUntis Entities
-
-| Entity Option | Default | Description |
-|---|---|---|
-| `device_id` | — | Set automatically when adding a WebUntis device |
-| `subject_display` | `short` | `short` or `long` subject names in lesson titles |
-| `room_display` | `short` | `short` or `long` room names in lesson locations |
+See the [WebUntis x Timetable Card Documentation](https://github.com/KingDando8430/HA-Timetable-Card/blob/v1.3.0-Update/documentation/WebUntis.md) for more information.
 
 Examples with WebUntis Integration:
 
