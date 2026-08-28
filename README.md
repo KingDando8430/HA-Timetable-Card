@@ -172,7 +172,7 @@ timetable-card/
 > This project is not affiliated with, endorsed, sponsored, or specifically approved by WebUntis.
 
 Timetable Card natively recognizes WebUntis devices.
-See the [WebUntis x Timetable Card Documentation](https://github.com/KingDando8430/HA-Timetable-Card/blob/v1.3.0-Update/documentation/WebUntis.md) for more information.
+See the [WebUntis x Timetable Card Documentation](https://github.com/KingDando8430/HA-Timetable-Card/blob/main/documentation/WebUntis.md) for more information.
 
 Examples with WebUntis Integration:
 
