@@ -130,7 +130,7 @@ keywords:
 | `keyword` | — | Text to match against the selected source |
 | `color` | — | Highlight color (hex) |
 | `exact_match` | `true` | `true` = exact match, `false` = contains match |
-| `color_mode` | `border` | `block` = filled background, `border` = left border only |
+| `color_mode` | `block` | `block` = filled background, `border` = left border only |
 | `match_source` | event name | What to match against: event name, `description`, or `location` |
 | `match_mode` | `keyword` | Set to `presence` to ignore `keyword` and just check whether `match_source` has a value |
 | `presence` | `has` | With `match_mode: presence`: `has` = field must contain something, `none` = field must be empty |
