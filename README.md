@@ -109,10 +109,12 @@ keywords:
 
 | Option | Default | Description |
 |---|---|---|
-| `entities` | `[]` | List of calendar entity IDs with optional `color` (see also [WebUntis Entities](#webuntis-entities)) |
+| `entities` | `[]` | List of calendar entity IDs with optional `color` |
 | `weekdays` | `[0,1,2,3,4,5,6]` | Visible day indices (0 = Monday, 1 = Tuesday, 6 = Sunday) |
 | `show_location` | `true` | Show event location below title |
 | `show_notes` | `true` | Show event description as third line |
+| `show_calendar` | `true` | Show the calendar name in the event popup |
+| `show_now_line` | `true` | Show the moving current-time line |
 | `time_position` | `left` | Time axis position: `left` or `right` |
 | `time_interval` | `event_based` | Grid lines: `event_based`, `15`, `30`, `60` |
 | `px_per_min` | `1.4` | Pixel height per minute (controls zoom level) |
@@ -121,7 +123,7 @@ keywords:
 | `last_day_only` | `false` | Show multi-day all-day events only on their last day |
 | `show_description_indicator` | `false` | Show a small ⓘ on events that have a description |
 | `auto_switch_week` | `false` | Automatically show next week once the selected weekdays have passed |
-| `keywords` | `[]` | Keyword rules (see below) |
+| `keywords` | `[]` | Keyword rules (see below) 
 
 ### Keyword Rule Options
 
