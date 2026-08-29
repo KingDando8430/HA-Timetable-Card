@@ -2,10 +2,10 @@
 // Home Assistant Timetable Card
 // Author: KingDando8430
 // https://github.com/KingDando8430/HA-Timetable-Card
-// Version: 1.2.2
+// Version: 1.3.0
 // ═══════════════════════════════════════════════════════════════════
 
-const TC_VERSION = '1.2.2';
+const TC_VERSION = '1.3.0';
 
 window.customCards = window.customCards || [];
 window.customCards.push({
@@ -16,9 +16,13 @@ window.customCards.push({
   documentationURL: 'https://github.com/KingDando8430/HA-Timetable-Card',
   getEntitySuggestion: (hass, entityId) => {
     if (entityId.split('.')[0] !== 'calendar') return null;
-    return {
-      config: { type: 'custom:timetable-card', entities: [{ id: entityId, color: null }] },
-    };
+    const base = { config: { type: 'custom:timetable-card', entities: [{ id: entityId }] } };
+    const meta = hass?.entities?.[entityId];
+    if (meta?.platform !== 'webuntis' || !meta.device_id) return base;
+    return [
+      base,
+      { label: 'WebUntis', config: { type: 'custom:timetable-card', entities: [{ id: entityId, device_id: meta.device_id }] } },
+    ];
   },
 });
 
@@ -84,6 +88,12 @@ const TC_DEFAULT = {
   keywords: [],
   refresh_interval: 'auto',
   weekdays: [0, 1, 2, 3, 4, 5, 6],
+  first_day_only: false,
+  last_day_only: false,
+  show_description_indicator: false,
+  auto_switch_week: false,
+  show_calendar: true,
+  show_now_line: true,
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -115,6 +125,10 @@ class TimetableCardEditor extends HTMLElement {
     this._hass = null;
     this._pickerEl = null;
     this._rendered = false;
+    this._editorPage = 'main';
+    this._editorKwIndex = null;
+    this._editorEntIndex = null;
+    this._kwRenameForceOpen = {};
   }
 
   setConfig(config) {
@@ -126,15 +140,57 @@ class TimetableCardEditor extends HTMLElement {
   set hass(h) {
     this._hass = h;
     if (this._pickerEl) this._pickerEl.hass = h;
-    if (!this._rendered) {
-      const lang = h?.locale?.language || h?.language || TC_STRINGS_FALLBACK;
-      tcLoadStrings(lang).then(() => this._render());
-    }
+    const lang = h?.locale?.language || h?.language || TC_STRINGS_FALLBACK;
+    tcLoadStrings(lang).then(() => this._render());
   }
 
   _dispatch(cfg) {
     this._config = cfg;
-    this.dispatchEvent(new CustomEvent('config-changed', { detail: { config: cfg }, bubbles: true, composed: true }));
+    const minimal = this._minimizeConfig(cfg);
+    this.dispatchEvent(new CustomEvent('config-changed', { detail: { config: minimal }, bubbles: true, composed: true }));
+  }
+
+  _minimizeConfig(cfg) {
+    const out = {};
+    for (const k of Object.keys(cfg)) {
+      if (k === 'entities') {
+        const ents = (cfg.entities || []).map(e => this._minimizeEntity(e));
+        if (ents.length) out.entities = ents;
+        continue;
+      }
+      if (k === 'keywords') {
+        const kws = (cfg.keywords || []).map(kw => this._minimizeKeyword(kw));
+        if (kws.length) out.keywords = kws;
+        continue;
+      }
+      if (!(k in TC_DEFAULT)) { out[k] = cfg[k]; continue; } // e.g. 'type' — always kept
+      const def  = TC_DEFAULT[k];
+      const same = Array.isArray(def) ? JSON.stringify(cfg[k]) === JSON.stringify(def) : cfg[k] === def;
+      if (!same) out[k] = cfg[k];
+    }
+    return out;
+  }
+
+  _minimizeEntity(e) {
+    const out = { id: e.id };
+    if (e.color) out.color = e.color;
+    if (e.device_id) {
+      out.device_id = e.device_id;
+      if (e.subject_display && e.subject_display !== 'short') out.subject_display = e.subject_display;
+      if (e.room_display && e.room_display !== 'short') out.room_display = e.room_display;
+    }
+    return out;
+  }
+
+  _minimizeKeyword(kw) {
+    const def = { keyword:'', color:null, exact_match:true, color_mode:'border', hidden:false, rename:'',
+      partial_rename_enabled:false, partial_rename_mode:'keyword', partial_rename_text:'', match_mode:'keyword', presence:'has' };
+    const out = {};
+    for (const k of Object.keys(kw)) {
+      if (k === 'match_source') { if (kw[k]) out[k] = kw[k]; continue; } // explicit source always kept — differs semantically from "unset"
+      if (kw[k] !== def[k]) out[k] = kw[k];
+    }
+    return out;
   }
   _set(k, v) {
     this._dispatch({ ...this._config, [k]: v });
@@ -150,7 +206,14 @@ class TimetableCardEditor extends HTMLElement {
     if (!id) return;
     const ents = this._getEntities();
     if (ents.find(e => e.id === id)) return;
-    this._set('entities', [...ents, { id, color: null }]);
+    const entry = { id, color: null };
+    const meta = this._hass?.entities?.[id];
+    if (meta?.platform === 'webuntis' && meta.device_id) {
+      entry.device_id = meta.device_id;
+      entry.subject_display = 'short';
+      entry.room_display = 'short';
+    }
+    this._set('entities', [...ents, entry]);
     if (this._pickerEl) this._pickerEl.value = '';
   }
 
@@ -162,25 +225,51 @@ class TimetableCardEditor extends HTMLElement {
     this._set('entities', this._getEntities().map(e => e.id === id ? { ...e, color: color || null } : e));
   }
 
+  // ── WebUntis devices ────────────────────────────────────────────
+  _webuntisDeviceName(e) {
+    const dev = this._hass?.devices?.[e.device_id];
+    return dev?.name_by_user || dev?.name || e.id;
+  }
+
   _renderEntityList() {
     const el = this.shadowRoot.getElementById('entity-list');
     if (!el) return;
     const t    = tcS(this._hass);
-    const ents = this._getEntities();
+    const ents = [...this._getEntities()].sort((a, b) => (a.device_id?1:0) - (b.device_id?1:0));
     el.innerHTML = ents.length
-      ? ents.map(e => `
-        <div class="ent-row" data-id="${tcEsc(e.id)}">
-          <span class="ent-icon">📅</span>
-          <span class="ent-id">${tcEsc(e.id)}</span>
-          <div class="swatch${e.color?'':' no-col'}" style="background:${e.color||'transparent'}" title="${t.ent_color_title}">
-            <input type="color" class="cpick ent-cpick" value="${e.color||'#03a9f4'}" data-id="${tcEsc(e.id)}" />
-          </div>
-          <button class="rm-btn ent-rm" data-id="${tcEsc(e.id)}" title="${t.ent_remove_title}">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
-            </svg>
-          </button>
-        </div>`).join('')
+      ? ents.map(e => {
+          if (e.device_id) {
+            const name = tcEsc(this._webuntisDeviceName(e));
+            return `
+            <div class="ent-row" data-id="${tcEsc(e.id)}">
+              <ha-icon class="ent-icon" icon="mdi:alpha-u-box"></ha-icon>
+              <span class="ent-id">${tcEsc(t.wu_label_prefix)}: ${name}</span>
+              <div class="swatch${e.color?'':' no-col'}" style="background:${e.color||'transparent'}" title="${t.ent_color_title}">
+                <input type="color" class="cpick ent-cpick" value="${e.color||'#03a9f4'}" data-id="${tcEsc(e.id)}" />
+              </div>
+              <button class="rm-btn ent-rm" data-id="${tcEsc(e.id)}" title="${t.ent_remove_title}">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+              </button>
+            </div>
+            <button class="kw-adv-btn ent-adv-btn" data-id="${tcEsc(e.id)}">
+              <span>${t.adv_config_btn}</span>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg>
+            </button>`;
+          }
+          const meta = this._hass?.entities?.[e.id];
+          const icon = meta?.icon || this._hass?.states?.[e.id]?.attributes?.icon || 'mdi:calendar';
+          return `
+          <div class="ent-row" data-id="${tcEsc(e.id)}">
+            <ha-icon class="ent-icon" icon="${tcEsc(icon)}"></ha-icon>
+            <span class="ent-id">${tcEsc(e.id)}</span>
+            <div class="swatch${e.color?'':' no-col'}" style="background:${e.color||'transparent'}" title="${t.ent_color_title}">
+              <input type="color" class="cpick ent-cpick" value="${e.color||'#03a9f4'}" data-id="${tcEsc(e.id)}" />
+            </div>
+            <button class="rm-btn ent-rm" data-id="${tcEsc(e.id)}" title="${t.ent_remove_title}">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+            </button>
+          </div>`;
+        }).join('')
       : `<p class="hint">${t.ent_hint}</p>`;
 
     el.querySelectorAll('.ent-rm').forEach(b => b.addEventListener('click', () => this._removeEntity(b.dataset.id)));
@@ -192,6 +281,66 @@ class TimetableCardEditor extends HTMLElement {
         inp.parentElement.classList.remove('no-col');
       });
     });
+    el.querySelectorAll('.ent-adv-btn').forEach(b => {
+      b.addEventListener('click', () => {
+        this._editorEntIndex = this._getEntities().findIndex(e => e.id === b.dataset.id);
+        this._editorPage = 'wu-advanced';
+        this._render();
+      });
+    });
+
+    if (this._pickerEl) this._pickerEl.excludeEntities = this._getEntities().map(e => e.id);
+  }
+
+  // ── WebUntis advanced page ─────────────────────────────────────────
+  _renderWuAdvancedPage(i) {
+    const t   = tcS(this._hass);
+    const ent = (this._config.entities || [])[i];
+    if (!ent || !ent.device_id) { this._editorPage = 'main'; this._render(); return; }
+    const subj = ent.subject_display === 'long' ? 'long' : 'short';
+    const room = ent.room_display === 'long' ? 'long' : 'short';
+    const name = tcEsc(this._webuntisDeviceName(ent));
+
+    this.shadowRoot.innerHTML = `
+<style>${this._editorCss()}</style>
+<div class="nav-hdr">
+  <button class="nav-back" id="wu-back" title="${t.nav_back}">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+  </button>
+  <div class="nav-hdr-txt">
+    <div class="nav-hdr-title">${t.adv_config_btn}</div>
+    <div class="nav-hdr-sub">${tcEsc(t.wu_label_prefix)}: ${name}</div>
+  </div>
+</div>
+
+<span class="sec">${t.sec_wu_lesson}</span>
+<div class="box">
+  <div class="row">
+    <div><div class="rl">${t.wu_subject_title}</div><div class="rs">${t.wu_subject_sub}</div></div>
+    <div class="seg">
+      <button class="seg-o${subj==='short'?' on':''}" data-f="subject_display" data-v="short">${t.wu_short}</button>
+      <button class="seg-o${subj==='long'?' on':''}" data-f="subject_display" data-v="long">${t.wu_long}</button>
+    </div>
+  </div>
+  <div class="row">
+    <div><div class="rl">${t.wu_room_title}</div><div class="rs">${t.wu_room_sub}</div></div>
+    <div class="seg">
+      <button class="seg-o${room==='short'?' on':''}" data-f="room_display" data-v="short">${t.wu_short}</button>
+      <button class="seg-o${room==='long'?' on':''}" data-f="room_display" data-v="long">${t.wu_long}</button>
+    </div>
+  </div>
+</div>`;
+
+    const s = this.shadowRoot;
+    s.getElementById('wu-back').addEventListener('click', () => { this._editorPage = 'main'; this._render(); });
+    s.querySelectorAll('[data-f]').forEach(b => {
+      b.addEventListener('click', () => {
+        const ents = [...(this._config.entities || [])];
+        ents[i] = { ...ents[i], [b.dataset.f]: b.dataset.v };
+        this._dispatch({ ...this._config, entities: ents });
+        this._renderWuAdvancedPage(i);
+      });
+    });
   }
 
   // ── Keywords ────────────────────────────────────────────────────
@@ -199,12 +348,18 @@ class TimetableCardEditor extends HTMLElement {
     this._set('keywords', [...(this._config.keywords || []), {
       keyword: '', color: null, exact_match: true,
       color_mode: 'block', hidden: false, rename: '',
-      rename_enabled: false, partial_rename_enabled: false,
-      partial_rename_mode: 'keyword', partial_rename_text: ''
+      partial_rename_enabled: false, partial_rename_mode: 'keyword', partial_rename_text: '',
+      match_source: 'summary', match_mode: 'keyword', presence: 'has'
     }]);
   }
-  _rmKw(i)      { const a = [...(this._config.keywords||[])]; a.splice(i,1); this._set('keywords', a); }
+  _rmKw(i)      { const a = [...(this._config.keywords||[])]; a.splice(i,1); this._kwRenameForceOpen = {}; this._set('keywords', a); }
   _setKw(i,k,v) { const a = [...(this._config.keywords||[])]; a[i] = { ...a[i], [k]: v }; this._set('keywords', a); }
+  _patchKwAdv(i, patch) {
+    const a = [...(this._config.keywords||[])];
+    a[i] = { ...a[i], ...patch };
+    this._dispatch({ ...this._config, keywords: a });
+    this._renderKwAdvancedPage(i);
+  }
 
   _renderKwList() {
     const el = this.shadowRoot.getElementById('kw-list');
@@ -216,16 +371,19 @@ class TimetableCardEditor extends HTMLElement {
       return;
     }
     el.innerHTML = kws.map((kw, i) => {
-      const renameOn   = kw.rename_enabled === true;
-      const partialOn  = renameOn && kw.partial_rename_enabled === true;
-      const partMode   = kw.partial_rename_mode || 'keyword';
+      const isPresence = kw.match_mode === 'presence' && (kw.match_source === 'description' || kw.match_source === 'location');
+      let roLabel = '';
+      if (isPresence) {
+        const srcLbl  = kw.match_source === 'location' ? t.kw_src_location : t.kw_src_description;
+        const presLbl = kw.presence !== 'none' ? t.kw_presence_has : t.kw_presence_none;
+        roLabel = `${srcLbl}: ${presLbl}`;
+      }
       return `
       <div class="kw-card">
         <div class="kw-r1">
-          <input class="kw-in" placeholder="${t.kw_placeholder}" value="${tcEsc(kw.keyword||'')}" data-i="${i}" />
-          <div class="swatch${kw.color?'':' no-col'}" style="background:${kw.color||'transparent'}">
-            <input type="color" class="cpick kw-cpick" value="${kw.color||'#4CAF50'}" data-i="${i}" />
-          </div>
+          ${isPresence
+            ? `<input class="kw-in kw-in-ro" value="${tcEsc(roLabel)}" disabled />`
+            : `<input class="kw-in" placeholder="${t.kw_placeholder}" value="${tcEsc(kw.keyword||'')}" data-i="${i}" />`}
           <button class="rm-btn kw-rm" data-i="${i}">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
               <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
@@ -233,46 +391,23 @@ class TimetableCardEditor extends HTMLElement {
           </button>
         </div>
         <div class="kw-r2">
-          <label class="kw-pill">
-            <input type="checkbox" class="kw-chk" data-i="${i}" data-k="exact_match" ${kw.exact_match!==false?'checked':''} />
-            <span>${t.kw_exact}</span>
-          </label>
-          <label class="kw-pill">
-            <input type="checkbox" class="kw-chk" data-i="${i}" data-k="hidden" ${kw.hidden?'checked':''} />
-            <span>${t.kw_hide}</span>
-          </label>
+          <div class="swatch${kw.color?'':' no-col'}" style="background:${kw.color||'transparent'}">
+            <input type="color" class="cpick kw-cpick" value="${kw.color||'#4CAF50'}" data-i="${i}" />
+          </div>
           <div class="kw-seg">
             <button class="seg-sm${(kw.color_mode||'block')==='block'?' on':''}" data-i="${i}" data-v="block">${t.kw_block}</button>
             <button class="seg-sm${kw.color_mode==='border'?' on':''}" data-i="${i}" data-v="border">${t.kw_border}</button>
           </div>
         </div>
-        <div class="kw-r2b">
-          <button class="kw-tog${renameOn?' on':''}" data-i="${i}" data-type="rename">${t.kw_rename_btn}</button>
-          ${renameOn ? `<button class="kw-tog${partialOn?' on':''}" data-i="${i}" data-type="partial">${t.kw_partial_btn}</button>` : ''}
-        </div>
-        ${renameOn ? `
-        <div class="kw-r3">
-          ${partialOn ? `
-          <div class="kw-partial-wrap">
-            <div class="kw-seg kw-pseg">
-              <button class="seg-sm${partMode==='keyword'?' on':''}" data-i="${i}" data-pv="keyword">${t.kw_partial_kw}</button>
-              <button class="seg-sm${partMode==='text'?' on':''}" data-i="${i}" data-pv="text">${t.kw_partial_text}</button>
-            </div>
-            ${partMode==='text' ? `<input class="kw-rename" placeholder="${t.kw_partial_ph}" value="${tcEsc(kw.partial_rename_text||'')}" data-i="${i}" data-field="partial_rename_text" />` : ''}
-          </div>` : ''}
-          <div class="kw-rename-row">
-            <span class="kw-rlbl">${t.kw_rename_label}</span>
-            <input class="kw-rename" placeholder="${t.kw_rename_ph}" value="${tcEsc(kw.rename||'')}" data-i="${i}" data-field="rename" />
-          </div>
-        </div>` : ''}
+        <button class="kw-adv-btn" data-i="${i}">
+          <span>${t.adv_config_btn}</span>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg>
+        </button>
       </div>`;
     }).join('');
 
-    el.querySelectorAll('.kw-in').forEach(e => {
+    el.querySelectorAll('.kw-in:not(.kw-in-ro)').forEach(e => {
       e.addEventListener('change', ev => this._setKw(+e.dataset.i, 'keyword', ev.target.value));
-    });
-    el.querySelectorAll('.kw-rename[data-field]').forEach(e => {
-      e.addEventListener('change', ev => this._setKw(+e.dataset.i, e.dataset.field, ev.target.value));
     });
     el.querySelectorAll('.kw-cpick').forEach(e => {
       e.addEventListener('change', ev => {
@@ -282,35 +417,150 @@ class TimetableCardEditor extends HTMLElement {
         e.parentElement.classList.remove('no-col');
       });
     });
-    el.querySelectorAll('.kw-chk').forEach(e => {
-      e.addEventListener('change', ev => this._setKw(+e.dataset.i, e.dataset.k, ev.target.checked));
-    });
     el.querySelectorAll('.seg-sm[data-v]').forEach(b => {
       b.addEventListener('click', () => this._setKw(+b.dataset.i, 'color_mode', b.dataset.v));
-    });
-    el.querySelectorAll('.seg-sm[data-pv]').forEach(b => {
-      b.addEventListener('click', () => this._setKw(+b.dataset.i, 'partial_rename_mode', b.dataset.pv));
-    });
-    el.querySelectorAll('.kw-tog[data-type="rename"]').forEach(b => {
-      b.addEventListener('click', () => {
-        const cur = this._config.keywords[+b.dataset.i];
-        const newVal = !cur.rename_enabled;
-        const a = [...this._config.keywords];
-        a[+b.dataset.i] = { ...cur, rename_enabled: newVal, partial_rename_enabled: newVal ? cur.partial_rename_enabled : false };
-        this._set('keywords', a);
-      });
-    });
-    el.querySelectorAll('.kw-tog[data-type="partial"]').forEach(b => {
-      b.addEventListener('click', () => {
-        const cur = this._config.keywords[+b.dataset.i];
-        const a = [...this._config.keywords];
-        a[+b.dataset.i] = { ...cur, partial_rename_enabled: !cur.partial_rename_enabled };
-        this._set('keywords', a);
-      });
     });
     el.querySelectorAll('.kw-rm').forEach(e => {
       e.addEventListener('click', () => this._rmKw(+e.dataset.i));
     });
+    el.querySelectorAll('.kw-adv-btn').forEach(b => {
+      b.addEventListener('click', () => {
+        this._editorKwIndex = +b.dataset.i;
+        this._editorPage = 'kw-advanced';
+        this._render();
+      });
+    });
+
+    if (this._pickerEl) this._pickerEl.excludeEntities = this._getEntities().map(e => e.id);
+  }
+
+  // ── Keyword advanced page ──────────────────────────────────────────
+  _renderKwAdvancedPage(i) {
+    const t  = tcS(this._hass);
+    const kw = (this._config.keywords || [])[i];
+    if (!kw) { this._editorPage = 'main'; this._render(); return; }
+
+    const source        = kw.match_source || 'summary';
+    const presenceReady = source === 'description' || source === 'location';
+    const isPresence    = presenceReady && kw.match_mode === 'presence';
+    const presence      = kw.presence !== 'none' ? 'has' : 'none';
+    const renameOn      = !!(kw.rename && kw.rename.trim()) || this._kwRenameForceOpen[i] === true;
+    const partialOn     = kw.partial_rename_enabled === true;
+    const partMode      = kw.partial_rename_mode || 'keyword';
+
+    this.shadowRoot.innerHTML = `
+<style>${this._editorCss()}</style>
+<div class="nav-hdr">
+  <button class="nav-back" id="kw-back" title="${t.nav_back}">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+  </button>
+  <div class="nav-hdr-txt">
+    <div class="nav-hdr-title">${t.adv_config_btn}</div>
+    <div class="nav-hdr-sub">${tcEsc(kw.keyword || t.kw_placeholder)}</div>
+  </div>
+</div>
+
+<span class="sec">${t.sec_kw_rules}</span>
+<div class="box">
+  <div class="row">
+    <div><div class="rl">${t.kw_source_title}</div><div class="rs">${t.kw_source_sub}</div></div>
+    <div class="seg">
+      <button class="seg-o${source==='summary'?' on':''}" data-src="summary">${t.kw_src_summary}</button>
+      <button class="seg-o${source==='description'?' on':''}" data-src="description">${t.kw_src_description}</button>
+      <button class="seg-o${source==='location'?' on':''}" data-src="location">${t.kw_src_location}</button>
+    </div>
+  </div>
+  ${presenceReady ? `
+  <div class="row">
+    <div><div class="rl">${t.kw_presence_title}</div><div class="rs">${t.kw_presence_sub}</div></div>
+    <ha-switch id="kw-presence-sw" ${isPresence?'checked':''}></ha-switch>
+  </div>` : ''}
+  ${isPresence ? `
+  <div class="row sub">
+    <div class="seg">
+      <button class="seg-o${presence==='has'?' on':''}" data-pres="has">${t.kw_presence_has}</button>
+      <button class="seg-o${presence==='none'?' on':''}" data-pres="none">${t.kw_presence_none}</button>
+    </div>
+  </div>` : ''}
+  ${!isPresence ? `
+  <div class="row">
+    <div><div class="rl">${t.kw_exact}</div><div class="rs">${t.kw_exact_sub}</div></div>
+    <ha-switch id="kw-exact-sw" ${kw.exact_match!==false?'checked':''}></ha-switch>
+  </div>` : ''}
+</div>
+
+<span class="sec">${t.sec_kw_appearance}</span>
+<div class="box">
+  <div class="row">
+    <div><div class="rl">${t.kw_rename_btn}</div><div class="rs">${t.kw_rename_sub}</div></div>
+    <ha-switch id="kw-rename-sw" ${renameOn?'checked':''}></ha-switch>
+  </div>
+  ${renameOn ? `
+  <div class="row">
+    <div><div class="rl">${t.kw_partial_btn}</div><div class="rs">${t.kw_partial_sub}</div></div>
+    <ha-switch id="kw-partial-sw" ${partialOn?'checked':''}></ha-switch>
+  </div>
+  ${partialOn ? `
+  <div class="row sub">
+    <div class="seg">
+      <button class="seg-o${partMode==='keyword'?' on':''}" data-pmode="keyword">${t.kw_partial_kw}</button>
+      <button class="seg-o${partMode==='text'?' on':''}" data-pmode="text">${t.kw_partial_text}</button>
+    </div>
+  </div>
+  ${partMode==='text' ? `
+  <div class="row">
+    <div class="rl">${t.kw_partial_text}</div>
+    <input class="txt-in" id="kw-partial-text" placeholder="${t.kw_partial_ph}" value="${tcEsc(kw.partial_rename_text||'')}" />
+  </div>` : ''}` : ''}
+  <div class="row">
+    <div class="rl">${t.kw_rename_label}</div>
+    <input class="txt-in" id="kw-rename-to" placeholder="${t.kw_rename_ph}" value="${tcEsc(kw.rename||'')}" />
+  </div>` : ''}
+  <div class="row">
+    <div><div class="rl">${t.kw_hide}</div><div class="rs">${t.kw_hide_sub}</div></div>
+    <ha-switch id="kw-hide-sw" ${kw.hidden?'checked':''}></ha-switch>
+  </div>
+</div>`;
+
+    this._bindKwAdvancedPage(i);
+  }
+
+  _bindKwAdvancedPage(i) {
+    const s = this.shadowRoot;
+    s.getElementById('kw-back').addEventListener('click', () => {
+      this._editorPage = 'main';
+      this._render();
+    });
+    s.querySelectorAll('[data-src]').forEach(b => {
+      b.addEventListener('click', () => {
+        const patch = { match_source: b.dataset.src };
+        if (b.dataset.src === 'summary') patch.match_mode = 'keyword';
+        this._patchKwAdv(i, patch);
+      });
+    });
+    s.getElementById('kw-presence-sw')?.addEventListener('change', e => {
+      this._patchKwAdv(i, { match_mode: e.target.checked ? 'presence' : 'keyword' });
+    });
+    s.querySelectorAll('[data-pres]').forEach(b => {
+      b.addEventListener('click', () => this._patchKwAdv(i, { presence: b.dataset.pres }));
+    });
+    s.getElementById('kw-exact-sw')?.addEventListener('change', e => this._setKw(i, 'exact_match', e.target.checked));
+    s.getElementById('kw-rename-sw')?.addEventListener('change', e => {
+      if (e.target.checked) {
+        this._kwRenameForceOpen[i] = true;
+        this._renderKwAdvancedPage(i);
+      } else {
+        this._kwRenameForceOpen[i] = false;
+        this._patchKwAdv(i, { rename: '', partial_rename_enabled: false, partial_rename_text: '' });
+      }
+    });
+    s.getElementById('kw-partial-sw')?.addEventListener('change', e => this._patchKwAdv(i, { partial_rename_enabled: e.target.checked }));
+    s.querySelectorAll('[data-pmode]').forEach(b => {
+      b.addEventListener('click', () => this._patchKwAdv(i, { partial_rename_mode: b.dataset.pmode }));
+    });
+    s.getElementById('kw-partial-text')?.addEventListener('change', e => this._setKw(i, 'partial_rename_text', e.target.value));
+    s.getElementById('kw-rename-to')?.addEventListener('change', e => this._setKw(i, 'rename', e.target.value));
+    s.getElementById('kw-hide-sw')?.addEventListener('change', e => this._setKw(i, 'hidden', e.target.checked));
   }
 
   // ── Weekdays ────────────────────────────────────────────────────
@@ -336,12 +586,20 @@ class TimetableCardEditor extends HTMLElement {
   // ── Full render ──────────────────────────────────────────────────
   _render() {
     this._rendered = true;
-    const c   = this._config;
-    const t   = tcS(this._hass);
-    const ppm = c.px_per_min || 1.4;
+    if (this._editorPage === 'kw-advanced' && (this._config.keywords || [])[this._editorKwIndex]) {
+      this._renderKwAdvancedPage(this._editorKwIndex);
+      return;
+    }
+    if (this._editorPage === 'wu-advanced' && (this._config.entities || [])[this._editorEntIndex]?.device_id) {
+      this._renderWuAdvancedPage(this._editorEntIndex);
+      return;
+    }
+    this._editorPage = 'main';
+    this._renderMainPage();
+  }
 
-    this.shadowRoot.innerHTML = `
-<style>
+  _editorCss() {
+    return `
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :host{display:block;font-family:-apple-system,BlinkMacSystemFont,'Roboto',sans-serif;color:var(--primary-text-color);padding-bottom:12px}
 .sec{font-size:11px;font-weight:700;letter-spacing:.85px;text-transform:uppercase;color:var(--secondary-text-color);opacity:.68;margin:22px 2px 7px;display:block}
@@ -358,13 +616,15 @@ select.pick{background:var(--secondary-background-color,rgba(0,0,0,.04));border:
 input[type=number].num-in{background:var(--secondary-background-color,rgba(0,0,0,.04));border:1px solid var(--divider-color,rgba(0,0,0,.12));border-radius:9px;padding:6px 10px;color:var(--primary-text-color);font-size:13px;outline:none;font-family:inherit;width:90px;text-align:right}
 input[type=number].num-in:focus{border-color:var(--primary-color,#03a9f4)}
 ha-switch{flex-shrink:0}
+.row>ha-switch{margin-left:auto}
+.row:has(>ha-switch:disabled){opacity:.45}
 #wd-row{display:flex;flex-wrap:wrap;gap:6px;padding:10px 15px 12px}
 .wd-pill{padding:5px 10px;border-radius:20px;border:1.5px solid var(--divider-color,rgba(0,0,0,.16));background:none;color:var(--secondary-text-color);font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .15s}
 .wd-pill.on{background:var(--primary-color,#03a9f4);border-color:var(--primary-color,#03a9f4);color:#fff}
 #entity-list{padding:2px 15px 4px}
 .ent-row{display:flex;align-items:center;gap:9px;padding:9px 0;border-bottom:1px solid var(--divider-color,rgba(0,0,0,.05))}
 .ent-row:last-child{border-bottom:none}
-.ent-icon{font-size:16px;line-height:1;flex-shrink:0}
+.ent-icon{width:18px;height:18px;--mdc-icon-size:18px;color:var(--secondary-text-color);flex-shrink:0}
 .ent-id{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13.5px;opacity:.85}
 .picker-wrap{padding:6px 15px 10px;border-top:1px solid var(--divider-color,rgba(0,0,0,.06))}
 #kw-list{padding:6px 15px 2px;display:flex;flex-direction:column;gap:10px}
@@ -372,24 +632,14 @@ ha-switch{flex-shrink:0}
 .kw-r1{display:flex;align-items:center;gap:8px;padding:9px 10px 8px}
 .kw-in{flex:1;min-width:0;border:1px solid var(--divider-color,rgba(0,0,0,.14));border-radius:8px;background:var(--secondary-background-color,rgba(0,0,0,.03));padding:6px 10px;font-size:13.5px;color:var(--primary-text-color);outline:none;font-family:inherit}
 .kw-in:focus{border-color:var(--primary-color,#03a9f4)}
+.kw-in-ro{opacity:.55;font-style:italic;cursor:default}
 .kw-r2{display:flex;align-items:center;gap:8px;padding:0 10px 8px;flex-wrap:wrap}
-.kw-r2b{display:flex;align-items:center;gap:6px;padding:0 10px 8px;flex-wrap:wrap}
-.kw-tog{padding:4px 11px;border-radius:20px;border:1.5px solid var(--divider-color,rgba(0,0,0,.16));background:none;color:var(--secondary-text-color);font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .15s}
-.kw-tog.on{background:rgba(var(--rgb-primary-color,3,169,244),.12);border-color:var(--primary-color,#03a9f4);color:var(--primary-color,#03a9f4)}
-.kw-r3{display:flex;flex-direction:column;gap:6px;padding:8px 10px 9px;border-top:1px solid var(--divider-color,rgba(0,0,0,.06))}
-.kw-partial-wrap{display:flex;flex-direction:column;gap:6px}
-.kw-pseg{align-self:flex-start}
-.kw-rename-row{display:flex;align-items:center;gap:8px}
-.kw-rlbl{font-size:11px;font-weight:600;color:var(--secondary-text-color);opacity:.7;white-space:nowrap;flex-shrink:0}
-.kw-rename{flex:1;min-width:0;border:1px solid var(--divider-color,rgba(0,0,0,.14));border-radius:8px;background:var(--secondary-background-color,rgba(0,0,0,.03));padding:5px 9px;font-size:13px;color:var(--primary-text-color);outline:none;font-family:inherit}
-.kw-rename:focus{border-color:var(--primary-color,#03a9f4)}
-label.kw-pill{display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border-radius:20px;border:1.5px solid var(--divider-color,rgba(0,0,0,.16));cursor:pointer;font-size:12.5px;font-weight:500;color:var(--secondary-text-color);font-family:inherit;transition:all .15s;user-select:none}
-.kw-pill:has(input:checked){background:rgba(var(--rgb-primary-color,3,169,244),.12);border-color:var(--primary-color,#03a9f4);color:var(--primary-color,#03a9f4)}
-.kw-pill input{display:none}
 .kw-seg{display:flex;background:var(--secondary-background-color,rgba(120,120,128,.14));border-radius:8px;padding:2px;gap:1px;margin-left:auto}
-.kw-r2b .kw-seg{margin-left:0}
 .seg-sm{padding:3px 10px;border-radius:6px;border:none;background:none;font-size:11.5px;font-weight:500;cursor:pointer;color:var(--secondary-text-color);font-family:inherit;transition:all .14s;white-space:nowrap}
 .seg-sm.on{background:var(--card-background-color,#fff);color:var(--primary-text-color);box-shadow:0 1px 3px rgba(0,0,0,.12)}
+.kw-adv-btn{display:flex;align-items:center;justify-content:space-between;width:100%;padding:9px 10px;background:none;border:none;border-top:1px solid var(--divider-color,rgba(0,0,0,.06));color:var(--primary-color,#03a9f4);font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit;transition:background .15s}
+.kw-adv-btn:hover{background:var(--secondary-background-color,rgba(120,120,128,.08))}
+.kw-adv-btn svg{opacity:.75;flex-shrink:0}
 .kw-footer{padding:8px 15px 10px;border-top:1px solid var(--divider-color,rgba(0,0,0,.06))}
 .swatch{width:28px;height:28px;border-radius:7px;border:1.5px solid rgba(0,0,0,.14);overflow:hidden;position:relative;flex-shrink:0;cursor:pointer}
 .swatch.no-col{background:repeating-conic-gradient(rgba(0,0,0,.07) 0% 25%, transparent 0% 50%) 0 0/8px 8px !important;border-style:dashed}
@@ -399,7 +649,24 @@ label.kw-pill{display:inline-flex;align-items:center;gap:5px;padding:4px 9px;bor
 .rm-btn{background:none;border:none;cursor:pointer;color:var(--secondary-text-color);padding:5px;border-radius:6px;display:flex;align-items:center;opacity:.4;transition:opacity .15s,color .15s;flex-shrink:0}
 .rm-btn:hover{opacity:1;color:var(--error-color,#f44336)}
 .hint{font-size:13px;color:var(--secondary-text-color);padding:10px 0;opacity:.65;font-style:italic}
-</style>
+.txt-in{border:1px solid var(--divider-color,rgba(0,0,0,.14));border-radius:8px;background:var(--secondary-background-color,rgba(0,0,0,.03));padding:6px 10px;font-size:13px;color:var(--primary-text-color);outline:none;font-family:inherit;text-align:right;max-width:170px;width:100%}
+.txt-in:focus{border-color:var(--primary-color,#03a9f4)}
+.row.sub{padding-top:2px;padding-bottom:12px;justify-content:flex-end}
+.nav-hdr{display:flex;align-items:center;gap:10px;padding:2px 2px 16px}
+.nav-back{background:var(--secondary-background-color,rgba(120,120,128,.14));border:none;border-radius:9px;width:32px;height:32px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--primary-color,#03a9f4);flex-shrink:0;transition:background .15s;padding:0}
+.nav-back:hover{background:rgba(var(--rgb-primary-color,3,169,244),.14)}
+.nav-hdr-txt{flex:1;min-width:0}
+.nav-hdr-title{font-size:16px;font-weight:700;letter-spacing:-.3px;color:var(--primary-text-color);line-height:1.25}
+.nav-hdr-sub{font-size:12px;color:var(--secondary-text-color);opacity:.7;margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}`;
+  }
+
+  _renderMainPage() {
+    const c   = this._config;
+    const t   = tcS(this._hass);
+    const ppm = c.px_per_min || 1.4;
+
+    this.shadowRoot.innerHTML = `
+<style>${this._editorCss()}</style>
 
 <span class="sec">${t.sec_calendar}</span>
 <div class="box">
@@ -431,6 +698,30 @@ label.kw-pill{display:inline-flex;align-items:center;gap:5px;padding:4px 9px;bor
   <div class="row">
     <div><div class="rl">${t.disp_notes}</div><div class="rs">${t.disp_notes_sub}</div></div>
     <ha-switch id="sw-notes" ${c.show_notes!==false?'checked':''}></ha-switch>
+  </div>
+  <div class="row">
+    <div><div class="rl">${t.disp_cal}</div><div class="rs">${t.disp_cal_sub}</div></div>
+    <ha-switch id="sw-cal" ${c.show_calendar!==false?'checked':''}></ha-switch>
+  </div>
+  <div class="row">
+    <div><div class="rl">${t.disp_nowline}</div><div class="rs">${t.disp_nowline_sub}</div></div>
+    <ha-switch id="sw-nowline" ${c.show_now_line!==false?'checked':''}></ha-switch>
+  </div>
+  <div class="row">
+    <div><div class="rl">${t.disp_first_day}</div><div class="rs">${t.disp_first_day_sub}</div></div>
+    <ha-switch id="sw-first-day" ${c.first_day_only===true?'checked':''} ${c.last_day_only===true?'disabled':''}></ha-switch>
+  </div>
+  <div class="row">
+    <div><div class="rl">${t.disp_last_day}</div><div class="rs">${t.disp_last_day_sub}</div></div>
+    <ha-switch id="sw-last-day" ${c.last_day_only===true?'checked':''} ${c.first_day_only===true?'disabled':''}></ha-switch>
+  </div>
+  <div class="row">
+    <div><div class="rl">${t.disp_auto_week}</div><div class="rs">${t.disp_auto_week_sub}</div></div>
+    <ha-switch id="sw-auto-week" ${c.auto_switch_week===true?'checked':''}></ha-switch>
+  </div>
+  <div class="row">
+    <div><div class="rl">${t.disp_desc_indicator}</div><div class="rs">${t.disp_desc_indicator_sub}</div></div>
+    <ha-switch id="sw-desc-ind" ${c.show_description_indicator===true?'checked':''}></ha-switch>
   </div>
 </div>
 
@@ -481,6 +772,7 @@ label.kw-pill{display:inline-flex;align-items:center;gap:5px;padding:4px 9px;bor
       this._pickerEl.hass = this._hass;
       this._pickerEl.label = t.ent_picker_label;
       this._pickerEl.includeDomains = ['calendar'];
+      this._pickerEl.excludeEntities = this._getEntities().map(e => e.id);
       this._pickerEl.allowCustomEntity = false;
       this._pickerEl.value = '';
       this._pickerEl.addEventListener('value-changed', e => { if (e.detail.value) this._addEntity(e.detail.value); });
@@ -491,6 +783,20 @@ label.kw-pill{display:inline-flex;align-items:center;gap:5px;padding:4px 9px;bor
     s.getElementById('add-kw').addEventListener('click', () => this._addKw());
     s.getElementById('sw-loc').addEventListener('change', e => this._set('show_location', e.target.checked));
     s.getElementById('sw-notes').addEventListener('change', e => this._set('show_notes', e.target.checked));
+    s.getElementById('sw-cal').addEventListener('change', e => this._set('show_calendar', e.target.checked));
+    s.getElementById('sw-nowline').addEventListener('change', e => this._set('show_now_line', e.target.checked));
+    s.getElementById('sw-auto-week').addEventListener('change', e => this._set('auto_switch_week', e.target.checked));
+    s.getElementById('sw-desc-ind').addEventListener('change', e => this._set('show_description_indicator', e.target.checked));
+    s.getElementById('sw-first-day').addEventListener('change', e => {
+      const v = e.target.checked;
+      this._dispatch({ ...this._config, first_day_only: v, last_day_only: v ? false : this._config.last_day_only });
+      this._render();
+    });
+    s.getElementById('sw-last-day').addEventListener('change', e => {
+      const v = e.target.checked;
+      this._dispatch({ ...this._config, last_day_only: v, first_day_only: v ? false : this._config.first_day_only });
+      this._render();
+    });
     s.getElementById('time-int').addEventListener('change', e => this._set('time_interval', e.target.value));
     s.getElementById('ref-int').addEventListener('change', e => this._set('refresh_interval', e.target.value));
     s.getElementById('ppm-in').addEventListener('change', e => this._set('px_per_min', parseFloat(e.target.value) || 1.4));
@@ -518,33 +824,50 @@ class TimetableCard extends HTMLElement {
     this._unavailable = false;
     this._hass    = null;
     this._weekOffset   = 0;
+    this._homeOffsetCache = 0;
     this._clockTimer   = null;
     this._refreshTimer = null;
+    this._retryTimer   = null;
+    this._midnightTimer = null;
     this._lastFetchKey = null;
+    this._lastRenderedKey = null;
+    this._lastEventsSig   = null;
     this._popup        = null;
+    this._webuntisState = {};
   }
 
   static getConfigElement() { return document.createElement('timetable-card-editor'); }
 
-  static getStubConfig(hass) {
-    const cals = hass
-      ? Object.keys(hass.states).filter(e => e.startsWith('calendar.')).slice(0, 2)
-      : [];
-    return { ...TC_DEFAULT, entities: cals.map(id => ({ id, color: null })) };
-  }
+  static getStubConfig() { return {}; }
 
   getCardSize() { return 10; }
   getGridOptions() {
-    return { columns: 12, rows: 10, min_columns: 5, min_rows: 5 };
+    return { columns: 12, rows: 'auto', min_columns: 9, min_rows: 5 };
   }
 
   setConfig(cfg) {
     if (cfg.entity && !cfg.entities) cfg = { ...cfg, entities: [cfg.entity] };
     const changed = JSON.stringify(cfg.entities) !== JSON.stringify(this._config.entities);
     this._config = { ...TC_DEFAULT, ...cfg };
+    const newHome = this._computeHomeOffset();
+    if (this._weekOffset === this._homeOffsetCache && this._weekOffset !== newHome) {
+      this._weekOffset = newHome;
+      this._lastFetchKey = null;
+    }
+    this._homeOffsetCache = newHome;
     if (changed) { this._events = []; this._lastFetchKey = null; if (this._hass) this._fetchEvents(); }
     this._setupRefresh();
+    this._setupClock();
     this._render();
+  }
+
+  _computeHomeOffset() {
+    if (!this._config.auto_switch_week) return 0;
+    const sel = this._config.weekdays;
+    if (!sel || !sel.length) return 0;
+    const lastSelected = Math.max(...sel);
+    const todayIdx = (new Date().getDay() + 6) % 7;
+    return todayIdx > lastSelected ? 1 : 0;
   }
 
   set hass(h) {
@@ -556,7 +879,7 @@ class TimetableCard extends HTMLElement {
         this._fetchEvents();
         if (this.isConnected) {
           this._setupRefresh();
-          this._clockTimer = setInterval(() => this._render(), 30_000);
+          this._setupClock();
         }
         this._render();
       });
@@ -565,25 +888,48 @@ class TimetableCard extends HTMLElement {
 
   connectedCallback() {
     if (!this._hass) return;
-    clearInterval(this._clockTimer);
-    this._clockTimer = setInterval(() => this._render(), 30_000);
+    this._setupClock();
     this._setupRefresh();
   }
 
   disconnectedCallback() {
     clearInterval(this._clockTimer);
     clearInterval(this._refreshTimer);
+    clearTimeout(this._retryTimer);
+    clearTimeout(this._midnightTimer);
     this._closePopup();
+  }
+
+  _setupClock() {
+    clearInterval(this._clockTimer);
+    this._clockTimer = this._config.show_now_line !== false
+      ? setInterval(() => this._render(), 30_000)
+      : null;
+    this._scheduleMidnightRefresh();
+  }
+
+  _scheduleMidnightRefresh() {
+    clearTimeout(this._midnightTimer);
+    const now  = new Date();
+    const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 5);
+    this._midnightTimer = setTimeout(() => {
+      if (this.isConnected) this._fetchEvents(true);
+      this._scheduleMidnightRefresh();
+    }, next - now);
   }
 
   _setupRefresh() {
     clearInterval(this._refreshTimer);
     const ri   = this._config.refresh_interval;
     const mins = (!ri || ri === 'auto') ? 10 : (parseInt(ri) || 10);
-    this._refreshTimer = setInterval(() => { this._lastFetchKey = null; this._fetchEvents(); }, mins * 60_000);
+    this._refreshTimer = setInterval(() => { this._lastFetchKey = null; this._fetchEvents(); this._refreshWebuntisAnchor(); }, mins * 60_000);
   }
 
   _getEntities() { return tcNormalizeEntities(this._config.entities || []); }
+  _webuntisDeviceName(e) {
+    const dev = this._hass?.devices?.[e.device_id];
+    return dev?.name_by_user || dev?.name || e.id;
+  }
 
   _weekRange() {
     const now = new Date();
@@ -619,7 +965,19 @@ class TimetableCard extends HTMLElement {
     return st !== undefined && st !== 'unavailable' && st !== 'unknown';
   }
 
-  async _fetchEvents() {
+  _eventsSignature(events) {
+    return events
+      .map(ev => [
+        ev._entityId,
+        ev.start?.dateTime || ev.start?.date || '',
+        ev.end?.dateTime || ev.end?.date || '',
+        ev.summary || '', ev.location || '', ev.description || '',
+      ].join('|'))
+      .sort()
+      .join('\n');
+  }
+
+  async _fetchEvents(force = false) {
     const allEnts = this._getEntities();
     if (!allEnts.length || !this._hass) return;
     const ents = allEnts.filter(e => this._entityUsable(e.id));
@@ -635,26 +993,160 @@ class TimetableCard extends HTMLElement {
     this._unavailable = false;
     const { monday, end } = this._weekRange();
     const key = `${ents.map(e=>e.id).join(',')}|${monday.toISOString()}`;
-    if (this._lastFetchKey === key) return;
+    if (this._lastFetchKey === key && !force) return;
+    const isNewView = force || key !== this._lastRenderedKey;
     this._lastFetchKey = key;
-    this._loading = true;
-    this._render();
+    if (isNewView) {
+      this._loading = true;
+      this._render();
+    }
+    let failed = false;
+    let newEvents = [];
     try {
       const results = await Promise.all(
         ents.map(e =>
           this._hass.callApi('GET',
             `calendars/${e.id}?start=${encodeURIComponent(monday.toISOString())}&end=${encodeURIComponent(end.toISOString())}`)
           .then(res => (Array.isArray(res) ? res : []).map(ev => ({ ...ev, _entityId: e.id })))
-          .catch(() => [])
+          .catch(() => { failed = true; return []; })
         )
       );
-      this._events = results.flat();
-      this._error  = null;
+      newEvents = results.flat();
     } catch (err) {
-      this._error  = err.message || String(err);
-      this._events = [];
+      failed = true;
+      this._error = err.message || String(err);
     }
+    if (failed) {
+      this._events = newEvents;
+      this._lastFetchKey = null;
+      this._lastRenderedKey = null;
+      clearTimeout(this._retryTimer);
+      this._retryTimer = setTimeout(() => this._fetchEvents(), 5_000);
+      this._loading = false;
+      this._render();
+      this._checkWebuntisFetch();
+      return;
+    }
+    this._error = null;
+    const sig = this._eventsSignature(newEvents);
+    const dataChanged = sig !== this._lastEventsSig;
+    this._events = newEvents;
+    this._lastEventsSig   = sig;
+    this._lastRenderedKey = key;
     this._loading = false;
+    if (isNewView || dataChanged) this._render();
+    this._checkWebuntisFetch();
+  }
+
+  // ── WebUntis supplemental fetch ─────────────────────────────────────
+  _allEvents() {
+    const wu = [];
+    for (const ent of this._getEntities()) {
+      if (!ent.device_id) continue;
+      const st = this._webuntisState[ent.id];
+      if (st?.events?.length) wu.push(...st.events);
+    }
+    return wu.length ? [...this._events, ...wu] : this._events;
+  }
+
+  _fmtISODate(d) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+  _mondayOf(d)   { const dt = new Date(d); dt.setHours(0,0,0,0); dt.setDate(dt.getDate() - ((dt.getDay()+6)%7)); return dt; }
+  _addDays(d, n) { const dt = new Date(d); dt.setDate(dt.getDate() + n); return dt; }
+
+  _convertLesson(lesson, ent) {
+    const pick = (arr, pref) => {
+      if (!Array.isArray(arr) || !arr.length) return '';
+      const key = pref === 'long' ? 'long_name' : 'name';
+      return arr.map(x => (x && (x[key] || x.name)) || '').filter(Boolean).join(', ');
+    };
+    const desc = [lesson.info, lesson.lstext, lesson.substText].filter(v => v && String(v).trim()).join(', ');
+    return {
+      start: { dateTime: lesson.start },
+      end:   { dateTime: lesson.end },
+      summary: pick(lesson.subjects, ent.subject_display),
+      location: pick(lesson.rooms, ent.room_display),
+      description: desc,
+      _entityId: ent.id,
+    };
+  }
+
+  async _fetchWebuntisBlock(ent, st) {
+    const start = st.coverageEnd ? this._addDays(st.coverageEnd, 1) : this._mondayOf(new Date());
+    const end   = this._addDays(start, 41);
+    st.loading  = true;
+    this._render();
+    try {
+      const result = await this._hass.callService('webuntis', 'get_timetable', {
+        device_id: ent.device_id,
+        start: this._fmtISODate(start),
+        end: this._fmtISODate(end),
+        apply_filter: true,
+        show_cancelled: true,
+        compact_result: true,
+        compact_tolerance_minutes: 0,
+      }, undefined, undefined, true);
+      const lessons = (result && result.response && result.response.lessons) || [];
+      st.events = [...st.events, ...lessons.map(l => this._convertLesson(l, ent))];
+      st.coverageEnd = this._addDays(end, 1);
+      st.consecutiveEmpty = lessons.length ? 0 : st.consecutiveEmpty + 1;
+      st.failed = false;
+    } catch (err) {
+      st.failed = true;
+    }
+    st.loading = false;
+    this._render();
+  }
+
+  async _checkWebuntisFetch() {
+    if (!this._hass) return;
+    const { monday, end } = this._weekRange();
+    for (const ent of this._getEntities()) {
+      if (!ent.device_id) continue;
+      const st = (this._webuntisState[ent.id] ||= { events: [], coverageEnd: null, consecutiveEmpty: 0, loading: false, failed: false });
+      if (st.loading || st.failed || st.consecutiveEmpty >= 2) continue;
+      if (st.coverageEnd && monday < st.coverageEnd) continue; // already inside known (possibly sparse) territory
+      const hasThisWeek = this._allEvents().some(ev =>
+        ev._entityId === ent.id && this._edt(ev,'start') && this._edt(ev,'start') < end && this._edt(ev,'end') > monday
+      );
+      if (hasThisWeek) continue;
+      await this._fetchWebuntisBlock(ent, st);
+    }
+  }
+
+  async _refreshWebuntisAnchor(manual = false) {
+    if (!this._hass) return;
+    const targets = this._getEntities().filter(e => e.device_id && this._webuntisState[e.id]?.coverageEnd && !this._webuntisState[e.id].loading);
+    if (!targets.length) return;
+    const anchorStart = this._mondayOf(new Date());
+    const anchorEnd   = this._addDays(anchorStart, 20);
+    const anchorEndEx = this._addDays(anchorEnd, 1);
+    for (const ent of targets) {
+      const st = this._webuntisState[ent.id];
+      st.loading = true;
+      this._render();
+      try {
+        const result = await this._hass.callService('webuntis', 'get_timetable', {
+          device_id: ent.device_id,
+          start: this._fmtISODate(anchorStart),
+          end: this._fmtISODate(anchorEnd),
+          apply_filter: true,
+          show_cancelled: true,
+          compact_result: true,
+          compact_tolerance_minutes: 0,
+        }, undefined, undefined, true);
+        const lessons = (result && result.response && result.response.lessons) || [];
+        const converted = lessons.map(l => this._convertLesson(l, ent));
+        st.events = st.events.filter(e2 => {
+          const s = new Date(e2.start.dateTime);
+          return !(s >= anchorStart && s < anchorEndEx);
+        }).concat(converted);
+        st.failed = false;
+        if (manual) st.consecutiveEmpty = 0; // give the look-ahead another chance on an explicit refresh
+      } catch (err) {
+        st.failed = true;
+      }
+      st.loading = false;
+    }
     this._render();
   }
 
@@ -688,13 +1180,24 @@ class TimetableCard extends HTMLElement {
     const d1 = new Date(d0); d1.setDate(d0.getDate()+1);
     return s < d1 && e > d0;
   }
+  _isAllDayFirstDay(ev, day) {
+    const s = new Date(ev.start.date);
+    const d0 = new Date(day); d0.setHours(0,0,0,0);
+    return s.toDateString() === d0.toDateString();
+  }
+  _isAllDayLastDay(ev, day) {
+    const last = new Date(ev.end.date);
+    last.setDate(last.getDate() - 1);
+    const d0 = new Date(day); d0.setHours(0,0,0,0);
+    return last.toDateString() === d0.toDateString();
+  }
 
   _applyRename(ev, kwRule) {
-    if (!kwRule || !kwRule.rename_enabled || !kwRule.rename) return null;
+    if (!kwRule || !kwRule.rename) return null;
     const title = ev.summary || '';
     if (!kwRule.partial_rename_enabled) return kwRule.rename;
     const mode = kwRule.partial_rename_mode || 'keyword';
-    if (mode === 'keyword') {
+    if (mode === 'keyword' && kwRule.keyword) {
       const re = new RegExp(kwRule.keyword.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'), 'gi');
       return title.replace(re, kwRule.rename);
     }
@@ -708,19 +1211,40 @@ class TimetableCard extends HTMLElement {
   _matchKw(ev) {
     const title = ev.summary || '';
     const desc  = (ev.description || '').replace(/<[^>]+>/g, '');
+    const loc   = ev.location || '';
     for (const kw of (this._config.keywords || [])) {
+      if (kw.match_mode === 'presence') {
+        if (kw.match_source !== 'description' && kw.match_source !== 'location') continue;
+        const val  = (kw.match_source === 'location' ? loc : desc).trim();
+        const has  = val.length > 0;
+        const want = kw.presence !== 'none';
+        if (has === want) return kw;
+        continue;
+      }
       if (!kw.keyword) continue;
       const exact = kw.exact_match !== false;
+      let haystack;
+      if (kw.match_source === 'description') haystack = desc;
+      else if (kw.match_source === 'location') haystack = loc;
+      else if (kw.match_source === 'summary') haystack = title;
+      else haystack = exact ? title : `${title} ${desc}`; // legacy configs without match_source
       const match = exact
-        ? title.toLowerCase() === kw.keyword.toLowerCase()
-        : `${title} ${desc}`.toLowerCase().includes(kw.keyword.toLowerCase());
+        ? haystack.toLowerCase() === kw.keyword.toLowerCase()
+        : haystack.toLowerCase().includes(kw.keyword.toLowerCase());
       if (match) return kw;
     }
     return null;
   }
   _entityColor(ev) {
     const ent = this._getEntities().find(e => e.id === ev._entityId);
-    return ent?.color || null;
+    return ent?.color || this._defaultEntityColor(ev._entityId) || null;
+  }
+  _defaultEntityColor(entityId) {
+    if (!entityId) return null;
+    const palette = ['#e57373','#64b5f6','#81c784','#ffb74d','#ba68c8','#4db6ac','#f06292','#9575cd','#a1887f','#4fc3f7','#aed581','#ffd54f'];
+    let hash = 0;
+    for (let i = 0; i < entityId.length; i++) hash = (hash * 31 + entityId.charCodeAt(i)) >>> 0;
+    return palette[hash % palette.length];
   }
   _eventColor(ev) {
     const kwRule = this._matchKw(ev);
@@ -794,7 +1318,13 @@ class TimetableCard extends HTMLElement {
     if (timeStr) rows += `<div class="pd-row"><div class="pd-ico">🕐</div><div class="pd-val">${timeStr}</div></div>`;
     if (loc)     rows += `<div class="pd-row"><div class="pd-ico">📍</div><div class="pd-val">${tcEsc(loc)}</div></div>`;
     if (rawDesc) rows += `<div class="pd-row"><div class="pd-ico">📝</div><div class="pd-val pd-desc">${tcEsc(rawDesc)}</div></div>`;
-    if (calId)   rows += `<div class="pd-row"><div class="pd-ico">📅</div><div class="pd-val pd-cal">${tcEsc(calId)}</div></div>`;
+    if (calId && this._config.show_calendar !== false) {
+      const calEnt   = this._getEntities().find(en => en.id === calId);
+      const calLabel = calEnt?.device_id
+        ? `${t.wu_label_prefix}: ${this._webuntisDeviceName(calEnt)}`
+        : (this._hass?.states?.[calId]?.attributes?.friendly_name || calId);
+      rows += `<div class="pd-row"><div class="pd-ico">📅</div><div class="pd-val pd-cal">${tcEsc(calLabel)}</div></div>`;
+    }
 
     const overlay = document.createElement('div');
     overlay.className = 'tc-popup-overlay';
@@ -844,6 +1374,13 @@ class TimetableCard extends HTMLElement {
   }
 
   _render() {
+    const newHome = this._computeHomeOffset();
+    if (this._weekOffset === this._homeOffsetCache && this._weekOffset !== newHome) {
+      this._weekOffset = newHome;
+      this._lastFetchKey = null;
+    }
+    this._homeOffsetCache = newHome;
+
     const t        = tcS(this._hass);
     const days     = this._weekDays(t);
     const { monday } = this._weekRange();
@@ -852,8 +1389,9 @@ class TimetableCard extends HTMLElement {
     const timeLeft = this._config.time_position !== 'right';
     const ppm      = parseFloat(this._config.px_per_min) || 1.4;
 
-    const allDayEvs = this._events.filter(ev =>  this._isAllDay(ev));
-    const timedEvs  = this._events.filter(ev => !this._isAllDay(ev));
+    const evSrc      = this._allEvents();
+    const allDayEvs = evSrc.filter(ev =>  this._isAllDay(ev));
+    const timedEvs  = evSrc.filter(ev => !this._isAllDay(ev));
     const hasAllDay = allDayEvs.length > 0;
 
     const bounds = this._boundaries(timedEvs);
@@ -866,6 +1404,7 @@ class TimetableCard extends HTMLElement {
     );
 
     const isCurrentWeek = this._weekOffset === 0;
+    const isHome        = this._weekOffset === newHome;
 
     const css = `
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -877,6 +1416,8 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px)}
 .hdr-title{font-size:14.5px;font-weight:700;letter-spacing:-.3px;color:var(--primary-text-color);line-height:1.2}
 .hdr-sub{font-size:11px;color:var(--secondary-text-color);margin-top:1px}
 .nav-grp{display:flex;align-items:center;gap:1px}
+.wu-status-ico{width:16px;height:16px;--mdc-icon-size:16px;color:var(--secondary-text-color);opacity:.6;flex-shrink:0;margin-right:2px}
+.wu-status-ico.loading{animation:pulse 1.4s ease-in-out infinite}
 .nav-btn{background:none;border:none;cursor:pointer;color:var(--secondary-text-color);padding:5px 9px;border-radius:8px;font-size:15px;font-weight:700;line-height:1;display:flex;align-items:center;transition:background .14s,color .14s;font-family:inherit}
 .nav-btn:hover{background:var(--secondary-background-color,rgba(0,0,0,.06));color:var(--primary-text-color)}
 .today-btn{background:none;border:1.5px solid var(--divider-color,rgba(0,0,0,.16));cursor:pointer;color:var(--secondary-text-color);padding:4px 9px;border-radius:7px;font-size:11px;font-weight:600;line-height:1;display:flex;align-items:center;transition:background .14s,color .14s,border-color .14s;font-family:inherit;white-space:nowrap}
@@ -924,10 +1465,18 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px)}
 .ev-title{font-size:11px;font-weight:700;color:var(--primary-text-color);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.35;letter-spacing:-.1px}
 .ev-loc{font-size:9.5px;color:var(--secondary-text-color);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;line-height:1.2;opacity:.68}
 .ev-notes{font-size:9px;color:var(--secondary-text-color);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px;line-height:1.2;opacity:.38;font-style:italic}
+.ev-desc-ind{position:absolute;bottom:3px;right:6px;font-size:10px;line-height:1;opacity:.55;color:var(--primary-text-color);pointer-events:none}
 .now-badge{position:absolute;top:4px;right:5px;width:5px;height:5px;border-radius:50%;background:var(--primary-color,#03a9f4);animation:pulse 2s ease-in-out infinite;flex-shrink:0}
 @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.45;transform:scale(.6)}}`;
 
     const mondayStr = `${monday.getDate()}. ${t.months[monday.getMonth()]} ${monday.getFullYear()}`;
+    const wuStates    = this._getEntities().filter(e => e.device_id).map(e => this._webuntisState[e.id]).filter(Boolean);
+    const wuLoading   = wuStates.some(s => s.loading);
+    const wuFailed    = !wuLoading && wuStates.some(s => s.failed);
+    const wuCutoff    = !wuLoading && !wuFailed && wuStates.some(s => s.consecutiveEmpty >= 2);
+    const wuStatusIco = wuLoading ? 'mdi:alpha-u-box' : ((wuFailed || wuCutoff) ? 'mdi:cloud-cancel' : '');
+    const wuStatusTtl = wuLoading ? t.wu_loading_title : (wuFailed ? t.wu_failed_title : t.wu_stopped_title);
+
     const hdrHTML = `<div class="hdr">
       <div class="hdr-ico">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="white">
@@ -938,9 +1487,10 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px)}
         <div class="hdr-title">${t.card_title}</div>
         <div class="hdr-sub">${t.week_prefix} ${weekNum} · ${mondayStr}</div>
       </div>
+      ${wuStatusIco ? `<ha-icon class="wu-status-ico${wuLoading?' loading':''}" icon="${wuStatusIco}" title="${wuStatusTtl}"></ha-icon>` : ''}
       <div class="nav-grp">
         <button class="nav-btn" id="prev-btn" title="${t.prev_week}">&lt;</button>
-        <button class="today-btn${isCurrentWeek?' active':''}" id="today-btn" title="${t.today_btn}">${t.today_btn}</button>
+        <button class="today-btn${isHome?' active':''}" id="today-btn" title="${t.today_btn}">${t.today_btn}</button>
         <button class="nav-btn" id="next-btn" title="${t.next_week}">&gt;</button>
       </div>
       <button class="ico-btn${this._loading?' spin':''}" id="ref-btn" title="${t.refresh}">
@@ -975,7 +1525,12 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px)}
     let allDayHTML = '';
     if (hasAllDay) {
       const cols = days.map(day => {
-        const chips = allDayEvs.filter(ev => this._allDayOnDay(ev, day.date)).map(ev => {
+        const chips = allDayEvs.filter(ev => {
+          if (!this._allDayOnDay(ev, day.date)) return false;
+          if (this._config.first_day_only) return this._isAllDayFirstDay(ev, day.date);
+          if (this._config.last_day_only) return this._isAllDayLastDay(ev, day.date);
+          return true;
+        }).map(ev => {
           const kwRule = this._matchKw(ev);
           if (kwRule?.hidden) return '';
           const col = kwRule?.color || this._entityColor(ev);
@@ -1007,7 +1562,7 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px)}
     }).join('');
 
     const nowMin = this._toMin(now);
-    const showNow = isCurrentWeek && nowMin >= minT && nowMin <= maxT;
+    const showNow = this._config.show_now_line !== false && isCurrentWeek && nowMin >= minT && nowMin <= maxT;
     const nowTop  = (nowMin - minT) * ppm + PADDING_TOP;
 
     const dCols = days.map((day, di) => {
@@ -1032,13 +1587,14 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px)}
         const kwRule  = this._matchKw(ev);
         const baseCol = kwRule?.color || this._entityColor(ev);
         const rgb     = baseCol ? tcRgb(baseCol) : null;
-        const mode    = kwRule?.color ? (kwRule.color_mode || 'block') : (this._entityColor(ev) ? 'block' : null);
+        const mode    = kwRule?.color ? (kwRule.color_mode || 'border') : (this._entityColor(ev) ? 'block' : null);
         const renamed = this._applyRename(ev, kwRule);
         const displayTitle = renamed || ev.summary || t.no_title;
         const loc      = (ev.location || '').trim();
         const rawNotes = (ev.description || '').replace(/<[^>]+>/g,'').trim();
         const showLoc  = this._config.show_location !== false && loc;
         const showNote = this._config.show_notes !== false && rawNotes && height > 58;
+        const showDescInd = this._config.show_description_indicator === true && !!rawNotes;
         let sty = `top:${top}px;height:${height}px;left:${colLeft};width:${colW};`;
         if (rgb) {
           const { r, g, b } = rgb;
@@ -1058,6 +1614,7 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px)}
           <div class="ev-title">${tcEsc(displayTitle)}</div>
           ${showLoc?`<div class="ev-loc">📍 ${tcEsc(loc)}</div>`:''}
           ${showNote?`<div class="ev-notes">${tcEsc(rawNotes.substring(0,80))}${rawNotes.length>80?'…':''}</div>`:''}
+          ${showDescInd?`<div class="ev-desc-ind">ⓘ</div>`:''}
         </div>`;
       }).join('');
 
@@ -1086,11 +1643,12 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px)}
       this._weekOffset++; this._lastFetchKey = null; this._fetchEvents(); this._render();
     });
     s.getElementById('today-btn')?.addEventListener('click', () => {
-      if (this._weekOffset === 0) return;
-      this._weekOffset = 0; this._lastFetchKey = null; this._fetchEvents(); this._render();
+      const home = this._computeHomeOffset();
+      if (this._weekOffset === home) return;
+      this._weekOffset = home; this._homeOffsetCache = home; this._lastFetchKey = null; this._fetchEvents(); this._render();
     });
     s.getElementById('ref-btn')?.addEventListener('click', () => {
-      this._lastFetchKey = null; this._fetchEvents();
+      this._lastFetchKey = null; this._fetchEvents(true); this._refreshWebuntisAnchor(true);
     });
   }
 

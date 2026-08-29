@@ -32,6 +32,9 @@ A custom Home Assistant Lovelace card that displays calendar events in a weekly 
 * 🔄 **Automatic updates** — refreshes automatically at configurable intervals
 * ⚙️ **Built-in configuration UI** — no YAML required
 * 💬 **Multi-language support** — available in English and German
+* 🎯 **Flexible keyword matching** — match against the event name, description, or location
+* ✂️ **First/last day only** — collapse multi-day all-day events down to just their first or last day
+* ⏭️ **Auto-switch week** — automatically jumps to the next week once the visible days are over
 
 
 ---
@@ -64,11 +67,6 @@ A custom Home Assistant Lovelace card that displays calendar events in a weekly 
 
 Add the card via the visual editor or use the code editor.
 
-> [!TIP]
-> You can easily generate your YAML code here:
-> https://kingdando8430.github.io/HA-Timetable-Card/config-builder
-> > NO AI :)
-
 ### Code example:
 
 ```yaml
@@ -78,6 +76,8 @@ entities:
     color: "#03a9f4"
   - id: calendar.sports
     color: "#4CAF50"
+  - id: calendar.webuntis_max
+    device_id: 088b5755644095d477f2de
 weekdays:
   - 0
   - 1
@@ -99,6 +99,10 @@ keywords:
     color: "#ff0000"
     exact_match: false
     color_mode: block
+  - match_mode: presence
+    match_source: description
+    presence: has
+    color: "#9c27b0"
 ```
 
 ### Options
@@ -109,22 +113,31 @@ keywords:
 | `weekdays` | `[0,1,2,3,4,5,6]` | Visible day indices (0 = Monday, 1 = Tuesday, 6 = Sunday) |
 | `show_location` | `true` | Show event location below title |
 | `show_notes` | `true` | Show event description as third line |
+| `show_calendar` | `true` | Show the calendar name in the event popup |
+| `show_now_line` | `true` | Show the moving current-time line |
 | `time_position` | `left` | Time axis position: `left` or `right` |
 | `time_interval` | `event_based` | Grid lines: `event_based`, `15`, `30`, `60` |
 | `px_per_min` | `1.4` | Pixel height per minute (controls zoom level) |
 | `refresh_interval` | `auto` | Reload interval: `auto`, `5`, `10`, `15`, `30`, `60`, `120`, `180`, `360` minutes |
-| `keywords` | `[]` | Keyword rules (see below) |
+| `first_day_only` | `false` | Show multi-day all-day events only on their first day |
+| `last_day_only` | `false` | Show multi-day all-day events only on their last day |
+| `show_description_indicator` | `false` | Show a small ⓘ on events that have a description |
+| `auto_switch_week` | `false` | Automatically show next week once the selected weekdays have passed |
+| `keywords` | `[]` | Keyword rules (see below) 
 
 ### Keyword Rule Options
 
 | Option | Default | Description |
 |---|---|---|
-| `keyword` | — | Text to match against event title |
+| `keyword` | — | Text to match against the selected source |
 | `color` | — | Highlight color (hex) |
-| `exact_match` | `true` | `true` = exact title match, `false` = contains match |
+| `exact_match` | `true` | `true` = exact match, `false` = contains match |
 | `color_mode` | `block` | `block` = filled background, `border` = left border only |
+| `match_source` | event name | What to match against: event name, `description`, or `location` |
+| `match_mode` | `keyword` | Set to `presence` to ignore `keyword` and just check whether `match_source` has a value |
+| `presence` | `has` | With `match_mode: presence`: `has` = field must contain something, `none` = field must be empty |
 | `hidden` | `false` | Hide matching events completely |
-| `rename` | `""` | 	Override displayed label (empty = no rename) |
+| `rename` | `""` | Override displayed label (empty = no rename) |
 | `partial_rename_enabled` | `false` | Replace only a part of the label instead of the whole label |
 | `partial_rename_mode` | `keyword` | `keyword` = replaces the keyword in the label, `text` = replaces a custom string |
 | `partial_rename_text` | `""` | The specific text to replace when `partial_rename_mode` is `text` |
@@ -160,16 +173,14 @@ timetable-card/
 
 > This project is not affiliated with, endorsed, sponsored, or specifically approved by WebUntis.
 
+Timetable Card natively recognizes WebUntis devices.
+See the [WebUntis x Timetable Card Documentation](https://github.com/KingDando8430/HA-Timetable-Card/blob/main/documentation/WebUntis.md) for more information.
+
 Examples with WebUntis Integration:
 
 - Regular lessons displayed in the timetable
 - Cancelled lessons highlighted in red
 - Room changes highlighted in yellow
-
-> [!TIP]
-> You can easily generate your YAML code here:
-> https://kingdando8430.github.io/HA-Timetable-Card/config-builder
-> > NO AI :)
 
 ---
 
