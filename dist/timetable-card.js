@@ -92,6 +92,8 @@ const TC_DEFAULT = {
   last_day_only: false,
   show_description_indicator: false,
   auto_switch_week: false,
+  show_calendar: true,
+  show_now_line: true,
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -193,7 +195,7 @@ class TimetableCardEditor extends HTMLElement {
   _set(k, v) {
     this._dispatch({ ...this._config, [k]: v });
     if (k === 'keywords') this._renderKwList();
-    if (k === 'entities') { this._renderEntityList(); this._renderWuPicker(); }
+    if (k === 'entities') this._renderEntityList();
     if (k === 'weekdays') this._renderWeekdays();
   }
 
@@ -224,51 +226,9 @@ class TimetableCardEditor extends HTMLElement {
   }
 
   // ── WebUntis devices ────────────────────────────────────────────
-  _webuntisDevices() {
-    const hass = this._hass;
-    if (!hass?.devices) return [];
-    const used = new Set(this._getEntities().filter(e => e.device_id).map(e => e.device_id));
-    return Object.values(hass.devices).filter(d =>
-      d.identifiers?.some(([dom]) => dom === 'webuntis') && !used.has(d.id)
-    );
-  }
-
-  _resolveWebuntisCalendar(deviceId) {
-    const hass = this._hass;
-    if (!hass?.entities) return null;
-    const cands = Object.values(hass.entities).filter(e => e.device_id === deviceId && e.entity_id.startsWith('calendar.'));
-    if (!cands.length) return null;
-    const main = cands.find(e => !/homework|exam/i.test(e.entity_id));
-    return (main || cands[0]).entity_id;
-  }
-
   _webuntisDeviceName(e) {
     const dev = this._hass?.devices?.[e.device_id];
     return dev?.name_by_user || dev?.name || e.id;
-  }
-
-  _addWebuntisDevice(deviceId) {
-    const entId = this._resolveWebuntisCalendar(deviceId);
-    if (!entId) return;
-    const ents = this._getEntities();
-    if (ents.find(e => e.id === entId)) return;
-    this._set('entities', [...ents, { id: entId, color: null, device_id: deviceId, subject_display: 'short', room_display: 'short' }]);
-  }
-
-  _renderWuPicker() {
-    const wrap = this.shadowRoot.getElementById('wu-picker-wrap');
-    if (!wrap) return;
-    const t = tcS(this._hass);
-    const devices = this._webuntisDevices();
-    if (!devices.length) { wrap.innerHTML = ''; return; }
-    wrap.innerHTML = `
-      <select class="pick wu-pick" id="wu-pick">
-        <option value="">${t.wu_picker_label}</option>
-        ${devices.map(d => `<option value="${tcEsc(d.id)}">${tcEsc(d.name_by_user || d.name || d.id)}</option>`).join('')}
-      </select>`;
-    this.shadowRoot.getElementById('wu-pick').addEventListener('change', e => {
-      if (e.target.value) this._addWebuntisDevice(e.target.value);
-    });
   }
 
   _renderEntityList() {
@@ -330,7 +290,6 @@ class TimetableCardEditor extends HTMLElement {
     });
 
     if (this._pickerEl) this._pickerEl.excludeEntities = this._getEntities().map(e => e.id);
-    this._renderWuPicker();
   }
 
   // ── WebUntis advanced page ─────────────────────────────────────────
@@ -666,8 +625,6 @@ ha-switch{flex-shrink:0}
 .ent-row{display:flex;align-items:center;gap:9px;padding:9px 0;border-bottom:1px solid var(--divider-color,rgba(0,0,0,.05))}
 .ent-row:last-child{border-bottom:none}
 .ent-icon{width:18px;height:18px;--mdc-icon-size:18px;color:var(--secondary-text-color);flex-shrink:0}
-.wu-picker-wrap{padding:6px 15px 10px;border-top:1px solid var(--divider-color,rgba(0,0,0,.06))}
-.wu-pick{width:100%}
 .ent-id{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13.5px;opacity:.85}
 .picker-wrap{padding:6px 15px 10px;border-top:1px solid var(--divider-color,rgba(0,0,0,.06))}
 #kw-list{padding:6px 15px 2px;display:flex;flex-direction:column;gap:10px}
@@ -715,7 +672,6 @@ ha-switch{flex-shrink:0}
 <div class="box">
   <div id="entity-list"></div>
   <div class="picker-wrap" id="picker-wrap"></div>
-  <div class="wu-picker-wrap" id="wu-picker-wrap"></div>
 </div>
 
 <span class="sec">${t.sec_keywords}</span>
@@ -742,6 +698,14 @@ ha-switch{flex-shrink:0}
   <div class="row">
     <div><div class="rl">${t.disp_notes}</div><div class="rs">${t.disp_notes_sub}</div></div>
     <ha-switch id="sw-notes" ${c.show_notes!==false?'checked':''}></ha-switch>
+  </div>
+  <div class="row">
+    <div><div class="rl">${t.disp_cal}</div><div class="rs">${t.disp_cal_sub}</div></div>
+    <ha-switch id="sw-cal" ${c.show_calendar!==false?'checked':''}></ha-switch>
+  </div>
+  <div class="row">
+    <div><div class="rl">${t.disp_nowline}</div><div class="rs">${t.disp_nowline_sub}</div></div>
+    <ha-switch id="sw-nowline" ${c.show_now_line!==false?'checked':''}></ha-switch>
   </div>
   <div class="row">
     <div><div class="rl">${t.disp_first_day}</div><div class="rs">${t.disp_first_day_sub}</div></div>
@@ -819,6 +783,8 @@ ha-switch{flex-shrink:0}
     s.getElementById('add-kw').addEventListener('click', () => this._addKw());
     s.getElementById('sw-loc').addEventListener('change', e => this._set('show_location', e.target.checked));
     s.getElementById('sw-notes').addEventListener('change', e => this._set('show_notes', e.target.checked));
+    s.getElementById('sw-cal').addEventListener('change', e => this._set('show_calendar', e.target.checked));
+    s.getElementById('sw-nowline').addEventListener('change', e => this._set('show_now_line', e.target.checked));
     s.getElementById('sw-auto-week').addEventListener('change', e => this._set('auto_switch_week', e.target.checked));
     s.getElementById('sw-desc-ind').addEventListener('change', e => this._set('show_description_indicator', e.target.checked));
     s.getElementById('sw-first-day').addEventListener('change', e => {
@@ -861,7 +827,11 @@ class TimetableCard extends HTMLElement {
     this._homeOffsetCache = 0;
     this._clockTimer   = null;
     this._refreshTimer = null;
+    this._retryTimer   = null;
+    this._midnightTimer = null;
     this._lastFetchKey = null;
+    this._lastRenderedKey = null;
+    this._lastEventsSig   = null;
     this._popup        = null;
     this._webuntisState = {};
   }
@@ -887,6 +857,7 @@ class TimetableCard extends HTMLElement {
     this._homeOffsetCache = newHome;
     if (changed) { this._events = []; this._lastFetchKey = null; if (this._hass) this._fetchEvents(); }
     this._setupRefresh();
+    this._setupClock();
     this._render();
   }
 
@@ -908,7 +879,7 @@ class TimetableCard extends HTMLElement {
         this._fetchEvents();
         if (this.isConnected) {
           this._setupRefresh();
-          this._clockTimer = setInterval(() => this._render(), 30_000);
+          this._setupClock();
         }
         this._render();
       });
@@ -917,15 +888,34 @@ class TimetableCard extends HTMLElement {
 
   connectedCallback() {
     if (!this._hass) return;
-    clearInterval(this._clockTimer);
-    this._clockTimer = setInterval(() => this._render(), 30_000);
+    this._setupClock();
     this._setupRefresh();
   }
 
   disconnectedCallback() {
     clearInterval(this._clockTimer);
     clearInterval(this._refreshTimer);
+    clearTimeout(this._retryTimer);
+    clearTimeout(this._midnightTimer);
     this._closePopup();
+  }
+
+  _setupClock() {
+    clearInterval(this._clockTimer);
+    this._clockTimer = this._config.show_now_line !== false
+      ? setInterval(() => this._render(), 30_000)
+      : null;
+    this._scheduleMidnightRefresh();
+  }
+
+  _scheduleMidnightRefresh() {
+    clearTimeout(this._midnightTimer);
+    const now  = new Date();
+    const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 5);
+    this._midnightTimer = setTimeout(() => {
+      if (this.isConnected) this._fetchEvents(true);
+      this._scheduleMidnightRefresh();
+    }, next - now);
   }
 
   _setupRefresh() {
@@ -975,7 +965,19 @@ class TimetableCard extends HTMLElement {
     return st !== undefined && st !== 'unavailable' && st !== 'unknown';
   }
 
-  async _fetchEvents() {
+  _eventsSignature(events) {
+    return events
+      .map(ev => [
+        ev._entityId,
+        ev.start?.dateTime || ev.start?.date || '',
+        ev.end?.dateTime || ev.end?.date || '',
+        ev.summary || '', ev.location || '', ev.description || '',
+      ].join('|'))
+      .sort()
+      .join('\n');
+  }
+
+  async _fetchEvents(force = false) {
     const allEnts = this._getEntities();
     if (!allEnts.length || !this._hass) return;
     const ents = allEnts.filter(e => this._entityUsable(e.id));
@@ -991,27 +993,48 @@ class TimetableCard extends HTMLElement {
     this._unavailable = false;
     const { monday, end } = this._weekRange();
     const key = `${ents.map(e=>e.id).join(',')}|${monday.toISOString()}`;
-    if (this._lastFetchKey === key) return;
+    if (this._lastFetchKey === key && !force) return;
+    const isNewView = force || key !== this._lastRenderedKey;
     this._lastFetchKey = key;
-    this._loading = true;
-    this._render();
+    if (isNewView) {
+      this._loading = true;
+      this._render();
+    }
+    let failed = false;
+    let newEvents = [];
     try {
       const results = await Promise.all(
         ents.map(e =>
           this._hass.callApi('GET',
             `calendars/${e.id}?start=${encodeURIComponent(monday.toISOString())}&end=${encodeURIComponent(end.toISOString())}`)
           .then(res => (Array.isArray(res) ? res : []).map(ev => ({ ...ev, _entityId: e.id })))
-          .catch(() => [])
+          .catch(() => { failed = true; return []; })
         )
       );
-      this._events = results.flat();
-      this._error  = null;
+      newEvents = results.flat();
     } catch (err) {
-      this._error  = err.message || String(err);
-      this._events = [];
+      failed = true;
+      this._error = err.message || String(err);
     }
+    if (failed) {
+      this._events = newEvents;
+      this._lastFetchKey = null;
+      this._lastRenderedKey = null;
+      clearTimeout(this._retryTimer);
+      this._retryTimer = setTimeout(() => this._fetchEvents(), 5_000);
+      this._loading = false;
+      this._render();
+      this._checkWebuntisFetch();
+      return;
+    }
+    this._error = null;
+    const sig = this._eventsSignature(newEvents);
+    const dataChanged = sig !== this._lastEventsSig;
+    this._events = newEvents;
+    this._lastEventsSig   = sig;
+    this._lastRenderedKey = key;
     this._loading = false;
-    this._render();
+    if (isNewView || dataChanged) this._render();
     this._checkWebuntisFetch();
   }
 
@@ -1295,9 +1318,11 @@ class TimetableCard extends HTMLElement {
     if (timeStr) rows += `<div class="pd-row"><div class="pd-ico">🕐</div><div class="pd-val">${timeStr}</div></div>`;
     if (loc)     rows += `<div class="pd-row"><div class="pd-ico">📍</div><div class="pd-val">${tcEsc(loc)}</div></div>`;
     if (rawDesc) rows += `<div class="pd-row"><div class="pd-ico">📝</div><div class="pd-val pd-desc">${tcEsc(rawDesc)}</div></div>`;
-    if (calId) {
+    if (calId && this._config.show_calendar !== false) {
       const calEnt   = this._getEntities().find(en => en.id === calId);
-      const calLabel = calEnt?.device_id ? `${t.wu_label_prefix}: ${this._webuntisDeviceName(calEnt)}` : calId;
+      const calLabel = calEnt?.device_id
+        ? `${t.wu_label_prefix}: ${this._webuntisDeviceName(calEnt)}`
+        : (this._hass?.states?.[calId]?.attributes?.friendly_name || calId);
       rows += `<div class="pd-row"><div class="pd-ico">📅</div><div class="pd-val pd-cal">${tcEsc(calLabel)}</div></div>`;
     }
 
@@ -1537,7 +1562,7 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px)}
     }).join('');
 
     const nowMin = this._toMin(now);
-    const showNow = isCurrentWeek && nowMin >= minT && nowMin <= maxT;
+    const showNow = this._config.show_now_line !== false && isCurrentWeek && nowMin >= minT && nowMin <= maxT;
     const nowTop  = (nowMin - minT) * ppm + PADDING_TOP;
 
     const dCols = days.map((day, di) => {
@@ -1623,7 +1648,7 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px)}
       this._weekOffset = home; this._homeOffsetCache = home; this._lastFetchKey = null; this._fetchEvents(); this._render();
     });
     s.getElementById('ref-btn')?.addEventListener('click', () => {
-      this._lastFetchKey = null; this._fetchEvents(); this._refreshWebuntisAnchor(true);
+      this._lastFetchKey = null; this._fetchEvents(true); this._refreshWebuntisAnchor(true);
     });
   }
 
