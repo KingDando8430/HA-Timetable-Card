@@ -2,10 +2,10 @@
 // Home Assistant Timetable Card
 // Author: KingDando8430
 // https://github.com/KingDando8430/HA-Timetable-Card
-// Version: 1.3.0
+// Version: 1.3.1
 // ═══════════════════════════════════════════════════════════════════
 
-const TC_VERSION = '1.3.0';
+const TC_VERSION = '1.3.1';
 
 window.customCards = window.customCards || [];
 window.customCards.push({
@@ -55,7 +55,7 @@ async function tcLoadStrings(lang) {
   if (TC_STRINGS_CACHE[lang]) return TC_STRINGS_CACHE[lang];
   const base = new URL(import.meta.url).pathname.replace(/\/[^/]+$/, '');
   try {
-    const res = await fetch(`${base}/translations/${lang}.json`);
+    const res = await fetch(`${base}/translations/${lang}.json?v=${TC_VERSION}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     TC_STRINGS_CACHE[lang] = await res.json();
     return TC_STRINGS_CACHE[lang];
@@ -125,6 +125,7 @@ class TimetableCardEditor extends HTMLElement {
     this._hass = null;
     this._pickerEl = null;
     this._rendered = false;
+    this._lang = null;
     this._editorPage = 'main';
     this._editorKwIndex = null;
     this._editorEntIndex = null;
@@ -138,10 +139,12 @@ class TimetableCardEditor extends HTMLElement {
   }
 
   set hass(h) {
+    const prevLang = this._lang;
     this._hass = h;
     if (this._pickerEl) this._pickerEl.hass = h;
     const lang = h?.locale?.language || h?.language || TC_STRINGS_FALLBACK;
-    tcLoadStrings(lang).then(() => this._render());
+    this._lang = lang;
+    if (!this._rendered || lang !== prevLang) tcLoadStrings(lang).then(() => this._render());
   }
 
   _dispatch(cfg) {
@@ -1151,6 +1154,7 @@ class TimetableCard extends HTMLElement {
   }
 
   _isAllDay(ev) { return !!(ev.start && ev.start.date && !ev.start.dateTime); }
+  _allDayDate(dateStr) { return new Date(`${dateStr}T00:00:00`); }
   _edt(ev, f) {
     const v = ev[f];
     return v ? (v.dateTime ? new Date(v.dateTime) : new Date(v.date)) : null;
@@ -1175,18 +1179,18 @@ class TimetableCard extends HTMLElement {
   }
   _allDayOnDay(ev, day) {
     if (!this._isAllDay(ev)) return false;
-    const s = new Date(ev.start.date), e = new Date(ev.end.date);
+    const s = this._allDayDate(ev.start.date), e = this._allDayDate(ev.end.date);
     const d0 = new Date(day); d0.setHours(0,0,0,0);
     const d1 = new Date(d0); d1.setDate(d0.getDate()+1);
     return s < d1 && e > d0;
   }
   _isAllDayFirstDay(ev, day) {
-    const s = new Date(ev.start.date);
+    const s = this._allDayDate(ev.start.date);
     const d0 = new Date(day); d0.setHours(0,0,0,0);
     return s.toDateString() === d0.toDateString();
   }
   _isAllDayLastDay(ev, day) {
-    const last = new Date(ev.end.date);
+    const last = this._allDayDate(ev.end.date);
     last.setDate(last.getDate() - 1);
     const d0 = new Date(day); d0.setHours(0,0,0,0);
     return last.toDateString() === d0.toDateString();
