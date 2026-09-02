@@ -2,7 +2,7 @@
 
 A custom Home Assistant Lovelace card that displays calendar events in a weekly school-style timetable grid.
 
-[![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
+[![hacs_badge](https://img.shields.io/badge/HACS-Default-41BDF5.svg)](https://github.com/hacs/default)
 [![GitHub release](https://img.shields.io/github/v/release/KingDando8430/HA-Timetable-Card)](https://github.com/KingDando8430/HA-Timetable-Card/releases)
 [![Latest Release](https://img.shields.io/github/release-date/KingDando8430/HA-Timetable-Card?style=flat&label=Latest%20Release)](https://github.com/KingDando8430/HA-Timetable-Card/releases)
 [![Open Issues](https://img.shields.io/github/issues/KingDando8430/HA-Timetable-Card?style=flat&label=Open%20Issues)](https://github.com/KingDando8430/HA-Timetable-Card/issues)
