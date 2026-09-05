@@ -45,10 +45,10 @@ A custom Home Assistant Lovelace card that displays calendar events in a weekly 
 
 [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=KingDando8430&repository=HA-Timetable-Card&category=plugin)
 
-1. Open HACS → Frontend → **Custom repositories**
-2. Add [`https://github.com/KingDando8430/HA-Timetable-Card`](https://github.com/KingDando8430/HA-Timetable-Card) as type **Dashboard**
-4. Install **Timetable Card**
-5. Reload the Browser
+1. Open HACS in Home Assistant
+2. Search for **Timetable Card** in HACS
+3. Install **Timetable Card**
+4. Reload the Browser
 
 ### Manual
 
