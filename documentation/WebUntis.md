@@ -24,13 +24,11 @@ Select the `Timetable Card - WebUntis` in the entity-based Card picker or select
 > [!Warning]
 > To many lookups could result in an temporary login-error, where your WebUntis Account is blocked for a few hours.
 
-The WebUntis calendar entity only covers the upcoming 30 days. Once you navigate past the last known lesson, Timetable Card automatically requests for additional timetable data.
+The WebUntis calendar entity's own background sync usually only covers a few weeks ahead. Timetable Card continuously checks how far that native sync actually reaches and, whenever it falls short, requests the missing WebUntis lessons directly — starting exactly at the first day without data and reaching up to 12 weeks from now. Days already covered by the calendar entity itself are never queried again. A short pause with no lessons (e.g. a school holiday) followed by more lessons later is recognized correctly and does **not** trigger a lookup, since that data is already known.
 
 While a lookup is running, an <img src="https://raw.githubusercontent.com/Templarian/MaterialDesign/master/svg/alpha-u-box.svg" width="15" height="15" alt="WebUntis lookup"> icon is shown in the header.
 
-
-
-If a lookup fails or after two lookups without any lessons, automatic look-ahead stops. A <img src="https://raw.githubusercontent.com/Templarian/MaterialDesign/master/svg/cloud-cancel.svg" width="15" height="15" alt="No timetable data"> icon is shown instead. In both cases, the card falls back to the data already provided by the calendar entity.
+If a lookup fails, or a full look-ahead finds no lessons, further automatic lookups pause. A <img src="https://raw.githubusercontent.com/Templarian/MaterialDesign/master/svg/cloud-cancel.svg" width="15" height="15" alt="No timetable data"> icon is shown instead. In both cases, the card falls back to the data already provided by the calendar entity.
 
 A manual refresh resets the look-ahead stop.
 
