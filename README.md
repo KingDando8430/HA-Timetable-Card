@@ -27,15 +27,13 @@ A custom Home Assistant Lovelace card that displays calendar events in a weekly 
 * 🔀 **Overlap support** — overlapping events are shown side by side
 * 📍 **Location and notes** — optionally display event locations and descriptions
 * 📆 **Custom weekdays** — show only the days you want, such as Monday to Friday
-* 🕐 **Time column position** — place the time axis on the left or right side
 * ⏺️ **Live "Now" indicator** — highlights the current time with a live indicator line
 * 🔄 **Automatic updates** — refreshes automatically at configurable intervals
-* ⚙️ **Built-in configuration UI** — no YAML required
-* 💬 **Multi-language support** — available in English and German
 * 🎯 **Flexible keyword matching** — match against the event name, description, or location
 * ✂️ **First/last day only** — collapse multi-day all-day events down to just their first or last day
 * ⏭️ **Auto-switch week** — automatically jumps to the next week once the visible days are over
-
+* 🔁 **Dynamic day view** — show a rolling window (e.g. today + the next 2 days) instead of a fixed week
+* ➕ **Quick add-event button** — optionally add a floating button to create new calendar events without leaving the card
 
 ---
 
@@ -71,6 +69,7 @@ Add the card via the visual editor or use the code editor.
 
 ```yaml
 type: custom:timetable-card
+title: My Timetable
 entities:
   - id: calendar.school
     color: "#03a9f4"
@@ -79,17 +78,18 @@ entities:
   - id: calendar.webuntis_max
     device_id: 088b5755644095d477f2de
 weekdays:
-  - 0
-  - 1
-  - 2
-  - 3
-  - 4
+  - Mon
+  - Tue
+  - Wed
+  - Thu
+  - Fri
 show_location: true
 show_notes: true
 time_position: left
 time_interval: event_based
 px_per_min: 1.4
 refresh_interval: auto
+show_create_event_button: false
 keywords:
   - keyword: Math
     color: "#1f76f7"
@@ -105,12 +105,25 @@ keywords:
     color: "#9c27b0"
 ```
 
+Instead of a fixed set of weekdays, it can also show a rolling window relative to today:
+
+```yaml
+type: custom:timetable-card
+entities:
+  - id: calendar.school
+dynamic_start: today
+dynamic_count: 3
+```
+
 ### Options
 
 | Option | Default | Description |
 |---|---|---|
 | `entities` | `[]` | List of calendar entity IDs with optional `color` |
-| `weekdays` | `[0,1,2,3,4,5,6]` | Visible day indices (0 = Monday, 1 = Tuesday, 6 = Sunday) |
+| `title` | `""` | Custom header text (empty = the built-in "Timetable" label) |
+| `weekdays` | `[Mon,Tue,Wed,Thu,Fri,Sat,Sun]` | Visible weekdays: `Mon`…`Sun` |
+| `dynamic_start` | `today` | Used instead of `weekdays` for a rolling day view: `today` or `tomorrow` |
+| `dynamic_count` | `1` | With `dynamic_start`: how many consecutive days to show |
 | `show_location` | `true` | Show event location below title |
 | `show_notes` | `true` | Show event description as third line |
 | `show_calendar` | `true` | Show the calendar name in the event popup |
@@ -122,8 +135,11 @@ keywords:
 | `first_day_only` | `false` | Show multi-day all-day events only on their first day |
 | `last_day_only` | `false` | Show multi-day all-day events only on their last day |
 | `show_description_indicator` | `false` | Show a small ⓘ on events that have a description |
-| `auto_switch_week` | `false` | Automatically show next week once the selected weekdays have passed |
+| `auto_switch_week` | `false` | Automatically show next week once the selected weekdays have passed (Fixed weekdays only) |
+| `show_create_event_button` | `false` | Show a floating button on the card for quickly adding a new calendar event |
 | `keywords` | `[]` | Keyword rules (see below) 
+
+The visual editor's **Weekdays** section offers a **Fixed** / **Dynamic** switch, which only decides which of the controls above are shown — it isn't itself saved to the configuration.
 
 ### Keyword Rule Options
 
@@ -169,7 +185,7 @@ timetable-card/
 
 ## Works Great With
 
-[WebUntis Integration](https://github.com/JonasJoKuJonas/homeassistant-WebUntis) by [`@JonasJoKuJonas`](https://github.com/JonasJoKuJonas)
+[WebUntis Integration](https://github.com/JonasJoKuJonas/homeassistant-WebUntis) by [@JonasJoKuJonas](https://github.com/JonasJoKuJonas)
 
 > This project is not affiliated with, endorsed, sponsored, or specifically approved by WebUntis.
 
