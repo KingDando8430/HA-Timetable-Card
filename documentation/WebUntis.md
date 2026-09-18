@@ -32,6 +32,6 @@ If a lookup fails, or a full look-ahead finds no lessons, further automatic look
 
 A manual refresh resets the look-ahead stop.
 
-## --- 
+## ⭐️
 
 When you like the [Timetable Card](https://github.com/KingDando8430/HA-Timetable-Card) together with the [WebUntis integration](https://github.com/JonasJoKuJonas/homeassistant-WebUntis), please star *both* of our repositories.
