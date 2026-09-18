@@ -2,10 +2,10 @@
 // Home Assistant Timetable Card
 // Author: KingDando8430
 // https://github.com/KingDando8430/HA-Timetable-Card
-// Version: 1.3.1
+// Version: 1.4.0
 // ═══════════════════════════════════════════════════════════════════
 
-const TC_VERSION = '1.3.1';
+const TC_VERSION = '1.4.0';
 
 window.customCards = window.customCards || [];
 window.customCards.push({
@@ -72,7 +72,9 @@ function tcS(hass) {
 }
 
 // ─── Constants ──────────────────────────────────────────────────────
-const TC_DAY_KEYS = ['monday','tuesday','wednesday','thursday','friday','saturday','sunday'];
+const TC_DAY_KEYS   = ['monday','tuesday','wednesday','thursday','friday','saturday','sunday'];
+const TC_DAY_TOKENS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+const TC_WEBUNTIS_HORIZON_WEEKS = 12;
 
 const TIME_W     = 50;
 const PADDING_TOP = 12;
@@ -87,13 +89,17 @@ const TC_DEFAULT = {
   px_per_min: 1.4,
   keywords: [],
   refresh_interval: 'auto',
-  weekdays: [0, 1, 2, 3, 4, 5, 6],
+  title: '',
+  weekdays: [...TC_DAY_TOKENS],
+  dynamic_start: 'today',
+  dynamic_count: 1,
   first_day_only: false,
   last_day_only: false,
   show_description_indicator: false,
   auto_switch_week: false,
   show_calendar: true,
   show_now_line: true,
+  show_create_event_button: false,
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -113,6 +119,27 @@ function tcNormalizeEntities(raw) {
   if (!Array.isArray(raw)) return [];
   return raw.map(e => typeof e === 'string' ? { id: e, color: null } : e);
 }
+// Accepts either a legacy numeric weekday (0-6, Mon-Sun) or a new 'Mon'..'Sun' token
+// and returns the 0-6 index, or null if unrecognised.
+function tcDayIdx(v) {
+  if (typeof v === 'number') return (v >= 0 && v <= 6) ? v : null;
+  const i = TC_DAY_TOKENS.indexOf(v);
+  return i >= 0 ? i : null;
+}
+// Normalises a weekdays array (either format, or missing) to a sorted array of 0-6 indices.
+function tcNormWeekdays(arr) {
+  if (!Array.isArray(arr) || !arr.length) return null;
+  const out = arr.map(tcDayIdx).filter(v => v !== null);
+  return out.length ? out : null;
+}
+// True if the array contains any legacy numeric entries that still need migrating.
+function tcNeedsWeekdayMigration(arr) {
+  return Array.isArray(arr) && arr.some(v => typeof v === 'number');
+}
+// Converts a legacy numeric weekdays array to the new 'Mon'..'Sun' token array, preserving order.
+function tcMigrateWeekdays(arr) {
+  return arr.map(v => (typeof v === 'number' ? (TC_DAY_TOKENS[v] || v) : v));
+}
 
 // ═══════════════════════════════════════════════════════════════════
 // EDITOR
@@ -130,6 +157,7 @@ class TimetableCardEditor extends HTMLElement {
     this._editorKwIndex = null;
     this._editorEntIndex = null;
     this._kwRenameForceOpen = {};
+    this._wdModeForce = null;
   }
 
   setConfig(config) {
@@ -148,6 +176,9 @@ class TimetableCardEditor extends HTMLElement {
   }
 
   _dispatch(cfg) {
+    if (tcNeedsWeekdayMigration(cfg.weekdays)) {
+      cfg = { ...cfg, weekdays: tcMigrateWeekdays(cfg.weekdays) };
+    }
     this._config = cfg;
     const minimal = this._minimizeConfig(cfg);
     this.dispatchEvent(new CustomEvent('config-changed', { detail: { config: minimal }, bubbles: true, composed: true }));
@@ -199,7 +230,6 @@ class TimetableCardEditor extends HTMLElement {
     this._dispatch({ ...this._config, [k]: v });
     if (k === 'keywords') this._renderKwList();
     if (k === 'entities') this._renderEntityList();
-    if (k === 'weekdays') this._renderWeekdays();
   }
 
   // ── Entities ────────────────────────────────────────────────────
@@ -567,21 +597,96 @@ class TimetableCardEditor extends HTMLElement {
   }
 
   // ── Weekdays ────────────────────────────────────────────────────
-  _renderWeekdays() {
+  _wdMode() {
+    const c = this._config;
+    const hasDynamic = c.dynamic_start !== TC_DEFAULT.dynamic_start || c.dynamic_count !== TC_DEFAULT.dynamic_count;
+    return this._wdModeForce || (hasDynamic ? 'dynamic' : 'fixed');
+  }
+
+  _renderWeekdaysBlock() {
+    const el = this.shadowRoot.getElementById('wd-block');
+    if (!el) return;
+    const t    = tcS(this._hass);
+    const c    = this._config;
+    const mode = this._wdMode();
+    const dynStart = c.dynamic_start === 'tomorrow' ? 'tomorrow' : 'today';
+    const dynCount = Math.max(1, parseInt(c.dynamic_count) || 1);
+
+    el.innerHTML = `
+      <div style="padding:9px 15px 2px"><div class="rl">${t.disp_weekdays}</div></div>
+      <div class="seg seg-wide" id="wd-mode-seg" style="margin:8px 15px 10px">
+        <button class="seg-o${mode==='fixed'?' on':''}" data-wdmode="fixed">${t.wd_fixed}</button>
+        <button class="seg-o${mode==='dynamic'?' on':''}" data-wdmode="dynamic">${t.wd_dynamic}</button>
+      </div>
+      ${mode === 'fixed' ? `<div id="wd-row"></div>` : `
+      <div class="wd-dyn">
+        <div class="wd-dyn-row">
+          <div class="rl">${t.wd_dyn_start}</div>
+          <div class="seg">
+            <button class="seg-o${dynStart==='today'?' on':''}" data-dynf="today">${t.wd_dyn_today}</button>
+            <button class="seg-o${dynStart==='tomorrow'?' on':''}" data-dynf="tomorrow">${t.wd_dyn_tomorrow}</button>
+          </div>
+        </div>
+        <div class="wd-dyn-row">
+          <div><div class="rl">${t.wd_dyn_count}</div><div class="rs">${t.wd_dyn_count_sub}</div></div>
+          <input type="number" class="num-in" id="wd-dyn-count" min="1" max="14" value="${dynCount}" />
+        </div>
+      </div>`}
+      <div class="row" id="wd-auto-row">
+        <div><div class="rl">${t.disp_auto_week}</div><div class="rs">${t.disp_auto_week_sub}</div></div>
+        <ha-switch id="sw-auto-week" ${c.auto_switch_week===true?'checked':''}></ha-switch>
+      </div>`;
+
+    el.querySelectorAll('[data-wdmode]').forEach(b => {
+      b.addEventListener('click', () => {
+        if (this._wdMode() === b.dataset.wdmode) return;
+        this._wdModeForce = b.dataset.wdmode;
+        this._renderWeekdaysBlock();
+      });
+    });
+    el.querySelector('#sw-auto-week').addEventListener('change', e => this._set('auto_switch_week', e.target.checked));
+
+    if (mode === 'fixed') {
+      this._renderWeekdayPills();
+    } else {
+      el.querySelectorAll('[data-dynf]').forEach(b => {
+        b.addEventListener('click', () => {
+          this._wdModeForce = 'dynamic';
+          this._dispatch({ ...this._config, dynamic_start: b.dataset.dynf, weekdays: [...TC_DEFAULT.weekdays] });
+          this._renderWeekdaysBlock();
+        });
+      });
+      el.querySelector('#wd-dyn-count').addEventListener('change', e => {
+        const v = Math.min(14, Math.max(1, parseInt(e.target.value) || 1));
+        this._wdModeForce = 'dynamic';
+        this._dispatch({ ...this._config, dynamic_count: v, weekdays: [...TC_DEFAULT.weekdays] });
+        this._renderWeekdaysBlock();
+      });
+    }
+  }
+
+  _renderWeekdayPills() {
     const el = this.shadowRoot.getElementById('wd-row');
     if (!el) return;
     const t      = tcS(this._hass);
-    const active = this._config.weekdays || TC_DAY_KEYS.map((_, i) => i);
+    const active = tcNormWeekdays(this._config.weekdays) || [0,1,2,3,4,5,6];
     el.innerHTML = t.days.map((d, i) =>
       `<button class="wd-pill${active.includes(i)?' on':''}" data-i="${i}">${d.short}</button>`
     ).join('');
     el.querySelectorAll('.wd-pill').forEach(b => {
       b.addEventListener('click', () => {
-        let wd = [...(this._config.weekdays || TC_DAY_KEYS.map((_, j) => j))];
+        let wd = [...(tcNormWeekdays(this._config.weekdays) || [0,1,2,3,4,5,6])];
         const i = +b.dataset.i;
         if (wd.includes(i)) { if (wd.length > 1) wd = wd.filter(x => x !== i); }
         else wd = [...wd, i].sort((a, b) => a - b);
-        this._set('weekdays', wd);
+        this._wdModeForce = 'fixed';
+        this._dispatch({
+          ...this._config,
+          weekdays: wd.map(idx => TC_DAY_TOKENS[idx]),
+          dynamic_start: TC_DEFAULT.dynamic_start,
+          dynamic_count: TC_DEFAULT.dynamic_count,
+        });
+        this._renderWeekdayPills();
       });
     });
   }
@@ -624,6 +729,10 @@ ha-switch{flex-shrink:0}
 #wd-row{display:flex;flex-wrap:wrap;gap:6px;padding:10px 15px 12px}
 .wd-pill{padding:5px 10px;border-radius:20px;border:1.5px solid var(--divider-color,rgba(0,0,0,.16));background:none;color:var(--secondary-text-color);font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .15s}
 .wd-pill.on{background:var(--primary-color,#03a9f4);border-color:var(--primary-color,#03a9f4);color:#fff}
+.seg-wide{width:100%}
+.seg-wide .seg-o{flex:1;text-align:center}
+.wd-dyn{padding:2px 15px 12px;display:flex;flex-direction:column;gap:10px}
+.wd-dyn-row{display:flex;align-items:center;justify-content:space-between;gap:10px}
 #entity-list{padding:2px 15px 4px}
 .ent-row{display:flex;align-items:center;gap:9px;padding:9px 0;border-bottom:1px solid var(--divider-color,rgba(0,0,0,.05))}
 .ent-row:last-child{border-bottom:none}
@@ -677,6 +786,13 @@ ha-switch{flex-shrink:0}
   <div class="picker-wrap" id="picker-wrap"></div>
 </div>
 
+<span class="sec">${t.sec_title}</span>
+<div class="box">
+  <div class="row">
+    <input class="kw-in" id="title-in" placeholder="${tcEsc(t.card_title)}" value="${tcEsc(c.title||'')}" />
+  </div>
+</div>
+
 <span class="sec">${t.sec_keywords}</span>
 <div class="box">
   <div id="kw-list"></div>
@@ -690,10 +806,7 @@ ha-switch{flex-shrink:0}
 
 <span class="sec">${t.sec_display}</span>
 <div class="box">
-  <div class="row" style="flex-direction:column;align-items:flex-start;padding-bottom:0">
-    <div class="rl">${t.disp_weekdays}</div>
-    <div id="wd-row"></div>
-  </div>
+  <div id="wd-block"></div>
   <div class="row">
     <div><div class="rl">${t.disp_loc}</div><div class="rs">${t.disp_loc_sub}</div></div>
     <ha-switch id="sw-loc" ${c.show_location!==false?'checked':''}></ha-switch>
@@ -719,12 +832,12 @@ ha-switch{flex-shrink:0}
     <ha-switch id="sw-last-day" ${c.last_day_only===true?'checked':''} ${c.first_day_only===true?'disabled':''}></ha-switch>
   </div>
   <div class="row">
-    <div><div class="rl">${t.disp_auto_week}</div><div class="rs">${t.disp_auto_week_sub}</div></div>
-    <ha-switch id="sw-auto-week" ${c.auto_switch_week===true?'checked':''}></ha-switch>
-  </div>
-  <div class="row">
     <div><div class="rl">${t.disp_desc_indicator}</div><div class="rs">${t.disp_desc_indicator_sub}</div></div>
     <ha-switch id="sw-desc-ind" ${c.show_description_indicator===true?'checked':''}></ha-switch>
+  </div>
+  <div class="row">
+    <div><div class="rl">${t.disp_create_event_btn}</div><div class="rs">${t.disp_create_event_btn_sub}</div></div>
+    <ha-switch id="sw-create-event-btn" ${c.show_create_event_button===true?'checked':''}></ha-switch>
   </div>
 </div>
 
@@ -783,13 +896,14 @@ ha-switch{flex-shrink:0}
     }
 
     const s = this.shadowRoot;
+    s.getElementById('title-in').addEventListener('change', e => this._set('title', e.target.value.trim()));
     s.getElementById('add-kw').addEventListener('click', () => this._addKw());
     s.getElementById('sw-loc').addEventListener('change', e => this._set('show_location', e.target.checked));
     s.getElementById('sw-notes').addEventListener('change', e => this._set('show_notes', e.target.checked));
     s.getElementById('sw-cal').addEventListener('change', e => this._set('show_calendar', e.target.checked));
     s.getElementById('sw-nowline').addEventListener('change', e => this._set('show_now_line', e.target.checked));
-    s.getElementById('sw-auto-week').addEventListener('change', e => this._set('auto_switch_week', e.target.checked));
     s.getElementById('sw-desc-ind').addEventListener('change', e => this._set('show_description_indicator', e.target.checked));
+    s.getElementById('sw-create-event-btn').addEventListener('change', e => this._set('show_create_event_button', e.target.checked));
     s.getElementById('sw-first-day').addEventListener('change', e => {
       const v = e.target.checked;
       this._dispatch({ ...this._config, first_day_only: v, last_day_only: v ? false : this._config.last_day_only });
@@ -807,7 +921,7 @@ ha-switch{flex-shrink:0}
 
     this._renderEntityList();
     this._renderKwList();
-    this._renderWeekdays();
+    this._renderWeekdaysBlock();
   }
 }
 customElements.define('timetable-card-editor', TimetableCardEditor);
@@ -827,7 +941,9 @@ class TimetableCard extends HTMLElement {
     this._unavailable = false;
     this._hass    = null;
     this._weekOffset   = 0;
+    this._dayOffset    = 0;
     this._homeOffsetCache = 0;
+    this._createDialog  = null;
     this._clockTimer   = null;
     this._refreshTimer = null;
     this._retryTimer   = null;
@@ -851,6 +967,7 @@ class TimetableCard extends HTMLElement {
   setConfig(cfg) {
     if (cfg.entity && !cfg.entities) cfg = { ...cfg, entities: [cfg.entity] };
     const changed = JSON.stringify(cfg.entities) !== JSON.stringify(this._config.entities);
+    const rangeChanged = cfg.dynamic_start !== this._config.dynamic_start || cfg.dynamic_count !== this._config.dynamic_count;
     this._config = { ...TC_DEFAULT, ...cfg };
     const newHome = this._computeHomeOffset();
     if (this._weekOffset === this._homeOffsetCache && this._weekOffset !== newHome) {
@@ -859,14 +976,21 @@ class TimetableCard extends HTMLElement {
     }
     this._homeOffsetCache = newHome;
     if (changed) { this._events = []; this._lastFetchKey = null; if (this._hass) this._fetchEvents(); }
+    else if (rangeChanged) { this._lastFetchKey = null; if (this._hass) this._fetchEvents(); }
     this._setupRefresh();
     this._setupClock();
     this._render();
   }
 
+  _wdMode() {
+    const c = this._config;
+    return (c.dynamic_start !== TC_DEFAULT.dynamic_start || c.dynamic_count !== TC_DEFAULT.dynamic_count) ? 'dynamic' : 'fixed';
+  }
+
   _computeHomeOffset() {
+    if (this._wdMode() === 'dynamic') return 0; // dynamic mode has no week concept — always anchored via _dayOffset
     if (!this._config.auto_switch_week) return 0;
-    const sel = this._config.weekdays;
+    const sel = tcNormWeekdays(this._config.weekdays);
     if (!sel || !sel.length) return 0;
     const lastSelected = Math.max(...sel);
     const todayIdx = (new Date().getDay() + 6) % 7;
@@ -901,6 +1025,7 @@ class TimetableCard extends HTMLElement {
     clearTimeout(this._retryTimer);
     clearTimeout(this._midnightTimer);
     this._closePopup();
+    this._closeCreateEventDialog();
   }
 
   _setupClock() {
@@ -934,7 +1059,19 @@ class TimetableCard extends HTMLElement {
     return dev?.name_by_user || dev?.name || e.id;
   }
 
+  // In Dynamic mode "monday" is repurposed as the first displayed day (not necessarily a Monday),
+  // and dynCount holds how many consecutive days are shown, anchored on real "today" + _dayOffset.
   _weekRange() {
+    if (this._wdMode() === 'dynamic') {
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      const base  = this._addDays(today, this._config.dynamic_start === 'tomorrow' ? 1 : 0);
+      const count = Math.max(1, parseInt(this._config.dynamic_count) || 1);
+      const monday = this._addDays(base, this._dayOffset);
+      const end = new Date(monday);
+      end.setDate(monday.getDate() + count);
+      end.setHours(23, 59, 59, 999);
+      return { monday, end, dynCount: count };
+    }
     const now = new Date();
     const monday = new Date(now);
     const dow = now.getDay();
@@ -947,8 +1084,18 @@ class TimetableCard extends HTMLElement {
   }
 
   _weekDays(t) {
-    const { monday } = this._weekRange();
-    const sel = this._config.weekdays || TC_DAY_KEYS.map((_, i) => i);
+    const { monday, dynCount } = this._weekRange();
+    if (this._wdMode() === 'dynamic') {
+      const days = [];
+      for (let i = 0; i < dynCount; i++) {
+        const date = new Date(monday);
+        date.setDate(monday.getDate() + i);
+        const idx = (date.getDay() + 6) % 7; // 0=Mon..6=Sun
+        days.push({ key: TC_DAY_KEYS[idx], short: t.days[idx].short, idx, date, selected: true });
+      }
+      return days;
+    }
+    const sel = tcNormWeekdays(this._config.weekdays) || [0, 1, 2, 3, 4, 5, 6];
     return TC_DAY_KEYS.map((key, i) => {
       const date = new Date(monday);
       date.setDate(monday.getDate() + i);
@@ -1073,46 +1220,77 @@ class TimetableCard extends HTMLElement {
     };
   }
 
-  async _fetchWebuntisBlock(ent, st) {
-    const start = st.coverageEnd ? this._addDays(st.coverageEnd, 1) : this._mondayOf(new Date());
-    const end   = this._addDays(start, 41);
-    st.loading  = true;
-    this._render();
+  _computeWebuntisHorizon() {
+    const anchorMonday = this._mondayOf(new Date());
+    const horizon = this._addDays(anchorMonday, TC_WEBUNTIS_HORIZON_WEEKS * 7 - 1);
+    horizon.setHours(23, 59, 59, 999);
+    return horizon;
+  }
+
+  async _scanWebuntisNativeCoverage(ent, horizon) {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const endEx = this._addDays(horizon, 1);
     try {
-      const result = await this._hass.callService('webuntis', 'get_timetable', {
-        device_id: ent.device_id,
-        start: this._fmtISODate(start),
-        end: this._fmtISODate(end),
-        apply_filter: true,
-        show_cancelled: true,
-        compact_result: true,
-        compact_tolerance_minutes: 0,
-      }, undefined, undefined, true);
-      const lessons = (result && result.response && result.response.lessons) || [];
-      st.events = [...st.events, ...lessons.map(l => this._convertLesson(l, ent))];
-      st.coverageEnd = this._addDays(end, 1);
-      st.consecutiveEmpty = lessons.length ? 0 : st.consecutiveEmpty + 1;
-      st.failed = false;
-    } catch (err) {
-      st.failed = true;
+      const res = await this._hass.callApi('GET',
+        `calendars/${ent.id}?start=${encodeURIComponent(today.toISOString())}&end=${encodeURIComponent(endEx.toISOString())}`);
+      const evs = Array.isArray(res) ? res : [];
+      let lastEnd = null;
+      for (const ev of evs) {
+        const e = ev.end?.dateTime ? new Date(ev.end.dateTime) : (ev.end?.date ? this._allDayDate(ev.end.date) : null);
+        if (e && (!lastEnd || e > lastEnd)) lastEnd = e;
+      }
+      return lastEnd;
+    } catch {
+      return undefined;
     }
-    st.loading = false;
-    this._render();
   }
 
   async _checkWebuntisFetch() {
     if (!this._hass) return;
-    const { monday, end } = this._weekRange();
+    const horizon = this._computeWebuntisHorizon();
+    const today = new Date(); today.setHours(0, 0, 0, 0);
     for (const ent of this._getEntities()) {
       if (!ent.device_id) continue;
-      const st = (this._webuntisState[ent.id] ||= { events: [], coverageEnd: null, consecutiveEmpty: 0, loading: false, failed: false });
-      if (st.loading || st.failed || st.consecutiveEmpty >= 2) continue;
-      if (st.coverageEnd && monday < st.coverageEnd) continue; // already inside known (possibly sparse) territory
-      const hasThisWeek = this._allEvents().some(ev =>
-        ev._entityId === ent.id && this._edt(ev,'start') && this._edt(ev,'start') < end && this._edt(ev,'end') > monday
-      );
-      if (hasThisWeek) continue;
-      await this._fetchWebuntisBlock(ent, st);
+      const st = (this._webuntisState[ent.id] ||= { events: [], coverageFrom: null, coverageEnd: null, loading: false, failed: false });
+      if (st.loading) continue;
+
+      const lastNativeEnd = await this._scanWebuntisNativeCoverage(ent, horizon);
+      if (lastNativeEnd === undefined) continue; // native scan failed this cycle — retry later
+
+      if (lastNativeEnd && lastNativeEnd >= horizon) {
+        if (st.events.length || st.coverageEnd) { st.events = []; st.coverageFrom = null; st.coverageEnd = null; }
+        st.failed = false;
+        continue;
+      }
+
+      const neededStart = (lastNativeEnd && lastNativeEnd > today) ? lastNativeEnd : today;
+      const alreadyCovered = st.coverageFrom && st.coverageEnd
+        && st.coverageFrom <= neededStart && st.coverageEnd >= horizon;
+      if (alreadyCovered) continue;
+      if (st.failed) continue; 
+
+      st.loading = true;
+      this._render();
+      try {
+        const result = await this._hass.callService('webuntis', 'get_timetable', {
+          device_id: ent.device_id,
+          start: this._fmtISODate(neededStart),
+          end: this._fmtISODate(horizon),
+          apply_filter: true,
+          show_cancelled: true,
+          compact_result: true,
+          compact_tolerance_minutes: 0,
+        }, undefined, undefined, true);
+        const lessons = (result && result.response && result.response.lessons) || [];
+        st.events = lessons.map(l => this._convertLesson(l, ent));
+        st.coverageFrom = neededStart;
+        st.coverageEnd = horizon;
+        st.failed = false;
+      } catch (err) {
+        st.failed = true;
+      }
+      st.loading = false;
+      this._render();
     }
   }
 
@@ -1144,7 +1322,6 @@ class TimetableCard extends HTMLElement {
           return !(s >= anchorStart && s < anchorEndEx);
         }).concat(converted);
         st.failed = false;
-        if (manual) st.consecutiveEmpty = 0; // give the look-ahead another chance on an explicit refresh
       } catch (err) {
         st.failed = true;
       }
@@ -1377,6 +1554,233 @@ class TimetableCard extends HTMLElement {
     if (this._popup) { this._popup.remove(); this._popup = null; }
   }
 
+  // ── Create-event dialog ─────────────────────────────────────────
+  _openCreateEventDialog() {
+    this._closeCreateEventDialog();
+    const t = tcS(this._hass);
+    const overlay = document.createElement('div');
+    overlay.className = 'tc-ce-overlay';
+
+    const now = new Date();
+    const startDefault = new Date(now);
+    startDefault.setMinutes(Math.ceil(startDefault.getMinutes() / 30) * 30, 0, 0);
+    const endDefault = new Date(startDefault.getTime() + 60 * 60000);
+    const fmtTime = d => `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+
+    overlay.innerHTML = `
+<style>
+.tc-ce-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:1000;padding:16px;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Roboto',sans-serif;box-sizing:border-box}
+.tc-ce-overlay *{box-sizing:border-box}
+.tc-ce-card{background:var(--card-background-color,#fff);color:var(--primary-text-color);border-radius:18px;width:100%;max-width:420px;max-height:88vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,.3)}
+.tc-ce-hdr{display:flex;align-items:center;justify-content:space-between;padding:12px 6px;border-bottom:1px solid var(--divider-color,rgba(0,0,0,.08));flex-shrink:0}
+.tc-ce-hdr-title{font-size:16px;font-weight:700;letter-spacing:-.2px}
+.tc-ce-hbtn{background:none;border:none;font-size:15px;padding:8px 12px;cursor:pointer;color:var(--primary-color,#03a9f4);font-family:inherit;border-radius:8px}
+.tc-ce-hbtn.save{font-weight:700}
+.tc-ce-hbtn:disabled{opacity:.4;cursor:default}
+.tc-ce-body{overflow-y:auto;padding:4px 0 18px}
+.tc-ce-plain{width:100%;border:none;background:none;padding:11px 16px;font-size:15px;color:var(--primary-text-color);outline:none;font-family:inherit;border-bottom:1px solid var(--divider-color,rgba(0,0,0,.08))}
+.tc-ce-plain::placeholder{color:var(--secondary-text-color);opacity:.65}
+textarea.tc-ce-plain{resize:none;min-height:64px;line-height:1.4;font-family:inherit}
+.tc-ce-group{margin:16px 16px 0;background:var(--secondary-background-color,rgba(120,120,128,.09));border-radius:13px;overflow:hidden}
+.tc-ce-row{display:flex;align-items:center;gap:10px;min-height:46px;padding:8px 14px;border-bottom:1px solid var(--divider-color,rgba(0,0,0,.06))}
+.tc-ce-row:last-child{border-bottom:none}
+.tc-ce-label{flex:1;font-size:14.5px}
+.tc-ce-dt{display:flex;gap:6px;flex-shrink:0}
+.tc-ce-date,.tc-ce-time,.tc-ce-select{border:none;background:none;color:var(--primary-text-color);font-size:13.5px;font-family:inherit;text-align:right;outline:none}
+.tc-ce-cal-wrap{flex:1;min-width:0}
+.tc-ce-cal-select{width:100%;text-align:left;padding:6px 0}
+.tc-ce-error{margin:14px 16px 0;padding:10px 12px;border-radius:10px;background:rgba(var(--rgb-error-color,244,67,54),.12);color:var(--error-color,#f44336);font-size:13px;line-height:1.4}
+</style>
+<div class="tc-ce-card">
+  <div class="tc-ce-hdr">
+    <button class="tc-ce-hbtn" id="ce-cancel">${t.ce_cancel}</button>
+    <div class="tc-ce-hdr-title">${t.ce_dialog_title}</div>
+    <button class="tc-ce-hbtn save" id="ce-save">${t.ce_save}</button>
+  </div>
+  <div class="tc-ce-body">
+    <input class="tc-ce-plain" id="ce-title" placeholder="${t.ce_title_ph}" />
+    <input class="tc-ce-plain" id="ce-location" placeholder="${t.ce_location_ph}" />
+    <textarea class="tc-ce-plain" id="ce-description" placeholder="${t.ce_description_ph}"></textarea>
+    <div class="tc-ce-group">
+      <div class="tc-ce-row">
+        <div class="tc-ce-label">${t.ce_calendar}</div>
+        <div class="tc-ce-cal-wrap" id="ce-cal-wrap"></div>
+      </div>
+      <div class="tc-ce-row">
+        <div class="tc-ce-label">${t.ce_all_day}</div>
+        <ha-switch id="ce-allday"></ha-switch>
+      </div>
+      <div class="tc-ce-row">
+        <div class="tc-ce-label">${t.ce_start}</div>
+        <div class="tc-ce-dt">
+          <input type="date" class="tc-ce-date" id="ce-start-date" value="${this._fmtISODate(startDefault)}" />
+          <input type="time" class="tc-ce-time" id="ce-start-time" value="${fmtTime(startDefault)}" />
+        </div>
+      </div>
+      <div class="tc-ce-row">
+        <div class="tc-ce-label">${t.ce_end}</div>
+        <div class="tc-ce-dt">
+          <input type="date" class="tc-ce-date" id="ce-end-date" value="${this._fmtISODate(endDefault)}" />
+          <input type="time" class="tc-ce-time" id="ce-end-time" value="${fmtTime(endDefault)}" />
+        </div>
+      </div>
+      <div class="tc-ce-row">
+        <div class="tc-ce-label">${t.ce_repeat}</div>
+        <select class="tc-ce-select" id="ce-repeat">
+          <option value="none">${t.ce_repeat_none}</option>
+          <option value="daily">${t.ce_repeat_daily}</option>
+          <option value="weekly">${t.ce_repeat_weekly}</option>
+          <option value="monthly">${t.ce_repeat_monthly}</option>
+          <option value="yearly">${t.ce_repeat_yearly}</option>
+        </select>
+      </div>
+    </div>
+    <div class="tc-ce-error" id="ce-error" style="display:none"></div>
+  </div>
+</div>`;
+
+    document.body.appendChild(overlay);
+    this._createDialog = overlay;
+
+    overlay.addEventListener('click', ev => { if (ev.target === overlay) this._closeCreateEventDialog(); });
+    overlay.querySelector('#ce-cancel').addEventListener('click', () => this._closeCreateEventDialog());
+    overlay.querySelector('#ce-save').addEventListener('click', () => this._submitCreateEvent());
+
+    const startTimeEl = overlay.querySelector('#ce-start-time');
+    const endTimeEl   = overlay.querySelector('#ce-end-time');
+    overlay.querySelector('#ce-allday').addEventListener('change', e => {
+      const on = e.target.checked;
+      startTimeEl.style.display = on ? 'none' : '';
+      endTimeEl.style.display   = on ? 'none' : '';
+    });
+
+    this._createDialogPicker = null;
+    this._createDialogSelect = null;
+    const calWrap = overlay.querySelector('#ce-cal-wrap');
+    const cardFirstEnt = this._getEntities()[0]?.id || '';
+    if (this._hass && window.customElements.get('ha-entity-picker')) {
+      // Preferred: Home Assistant's own searchable entity picker, when its component
+      // bundle has already been loaded somewhere in this session.
+      const picker = document.createElement('ha-entity-picker');
+      picker.hass = this._hass;
+      picker.includeDomains = ['calendar'];
+      picker.allowCustomEntity = false;
+      picker.value = cardFirstEnt;
+      calWrap.appendChild(picker);
+      this._createDialogPicker = picker;
+    } else {
+      // Fallback: a plain <select> listing every calendar entity Home Assistant knows about —
+      // works even when ha-entity-picker's bundle hasn't been loaded (e.g. opened straight
+      // from a normal dashboard view rather than the editor).
+      const calIds = this._hass
+        ? Object.keys(this._hass.states).filter(id => id.startsWith('calendar.')).sort((a, b) => {
+            const na = this._hass.states[a].attributes.friendly_name || a;
+            const nb = this._hass.states[b].attributes.friendly_name || b;
+            return na.localeCompare(nb);
+          })
+        : [];
+      const sel = document.createElement('select');
+      sel.className = 'tc-ce-select tc-ce-cal-select';
+      sel.innerHTML = calIds.length
+        ? calIds.map(id => {
+            const name = this._hass.states[id].attributes.friendly_name || id;
+            return `<option value="${tcEsc(id)}"${id === cardFirstEnt ? ' selected' : ''}>${tcEsc(name)}</option>`;
+          }).join('')
+        : `<option value="">${t.ce_calendar_none}</option>`;
+      calWrap.appendChild(sel);
+      this._createDialogSelect = sel;
+    }
+  }
+
+  _closeCreateEventDialog() {
+    if (this._createDialog) { this._createDialog.remove(); this._createDialog = null; this._createDialogPicker = null; this._createDialogSelect = null; }
+  }
+
+  async _submitCreateEvent() {
+    const t = tcS(this._hass);
+    const ov = this._createDialog;
+    if (!ov) return;
+    const errEl = ov.querySelector('#ce-error');
+    errEl.style.display = 'none';
+
+    const title       = ov.querySelector('#ce-title').value.trim();
+    const location     = ov.querySelector('#ce-location').value.trim();
+    const description  = ov.querySelector('#ce-description').value.trim();
+    const entityId      = this._createDialogPicker ? this._createDialogPicker.value
+                         : (this._createDialogSelect ? this._createDialogSelect.value : '');
+    const allDay      = ov.querySelector('#ce-allday').checked;
+    const startDate     = ov.querySelector('#ce-start-date').value;
+    const startTime     = ov.querySelector('#ce-start-time').value || '00:00';
+    const endDate     = ov.querySelector('#ce-end-date').value;
+    const endTime     = ov.querySelector('#ce-end-time').value || '00:00';
+    const repeat      = ov.querySelector('#ce-repeat').value;
+
+    if (!title || !entityId || !startDate || !endDate) {
+      errEl.textContent = t.ce_error_required;
+      errEl.style.display = '';
+      return;
+    }
+
+    let start, end;
+    if (allDay) {
+      start = new Date(`${startDate}T00:00:00`);
+      end   = new Date(`${endDate}T00:00:00`);
+      end.setDate(end.getDate() + 1); // HA all-day end date is exclusive (RFC5545)
+    } else {
+      start = new Date(`${startDate}T${startTime}:00`);
+      end   = new Date(`${endDate}T${endTime}:00`);
+    }
+    if (end <= start) {
+      errEl.textContent = t.ce_error_range;
+      errEl.style.display = '';
+      return;
+    }
+
+    const saveBtn = ov.querySelector('#ce-save');
+    saveBtn.disabled = true;
+    saveBtn.textContent = t.ce_saving;
+
+    const pad = n => String(n).padStart(2, '0');
+    const fmtDateTime = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:00`;
+
+    try {
+      if (repeat === 'none') {
+        const fields = { summary: title };
+        if (description) fields.description = description;
+        if (location) fields.location = location;
+        if (allDay) {
+          fields.start_date = this._fmtISODate(start);
+          fields.end_date = this._fmtISODate(end);
+        } else {
+          fields.start_date_time = fmtDateTime(start);
+          fields.end_date_time = fmtDateTime(end);
+        }
+        await this._hass.callService('calendar', 'create_event', fields, { entity_id: entityId });
+      } else {
+        const rruleMap = { daily: 'FREQ=DAILY', weekly: 'FREQ=WEEKLY', monthly: 'FREQ=MONTHLY', yearly: 'FREQ=YEARLY' };
+        const event = { summary: title, rrule: rruleMap[repeat] };
+        if (description) event.description = description;
+        if (location) event.location = location;
+        if (allDay) {
+          event.start = this._fmtISODate(start);
+          event.end = this._fmtISODate(end);
+        } else {
+          event.start = fmtDateTime(start).replace(' ', 'T');
+          event.end = fmtDateTime(end).replace(' ', 'T');
+        }
+        await this._hass.callWS({ type: 'calendar/event/create', entity_id: entityId, event });
+      }
+      this._closeCreateEventDialog();
+      this._lastFetchKey = null;
+      this._fetchEvents();
+    } catch (err) {
+      errEl.textContent = (err && err.message) ? err.message : t.ce_error_generic;
+      errEl.style.display = '';
+      saveBtn.disabled = false;
+      saveBtn.textContent = t.ce_save;
+    }
+  }
+
   _render() {
     const newHome = this._computeHomeOffset();
     if (this._weekOffset === this._homeOffsetCache && this._weekOffset !== newHome) {
@@ -1386,8 +1790,9 @@ class TimetableCard extends HTMLElement {
     this._homeOffsetCache = newHome;
 
     const t        = tcS(this._hass);
+    const mode     = this._wdMode();
     const days     = this._weekDays(t);
-    const { monday } = this._weekRange();
+    const { monday, end: rangeEnd } = this._weekRange();
     const now      = new Date();
     const weekNum  = this._weekNum(monday);
     const timeLeft = this._config.time_position !== 'right';
@@ -1407,13 +1812,16 @@ class TimetableCard extends HTMLElement {
       timedEvs.filter(ev => { const s = this._edt(ev,'start'); return s && s.toDateString()===day.date.toDateString(); })
     );
 
-    const isCurrentWeek = this._weekOffset === 0;
-    const isHome        = this._weekOffset === newHome;
+    const isCurrentWeek = now >= monday && now <= rangeEnd;
+    const isHome        = mode === 'dynamic' ? this._dayOffset === 0 : this._weekOffset === newHome;
 
     const css = `
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :host{display:block;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Roboto',sans-serif;-webkit-font-smoothing:antialiased}
-ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px)}
+ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px);position:relative}
+.ce-fab{position:absolute;bottom:14px;right:14px;width:44px;height:44px;border-radius:50%;background:var(--primary-color,#03a9f4);color:#fff;border:none;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 4px 14px rgba(var(--rgb-primary-color,3,169,244),.4);z-index:15;transition:transform .15s ease,box-shadow .15s ease;flex-shrink:0}
+.ce-fab:hover{transform:scale(1.06);box-shadow:0 6px 18px rgba(var(--rgb-primary-color,3,169,244),.5)}
+.ce-fab:active{transform:scale(.96)}
 .hdr{display:flex;align-items:center;gap:9px;padding:10px 13px 9px;border-bottom:1px solid var(--divider-color,rgba(0,0,0,.08));background:var(--card-background-color);z-index:10;user-select:none}
 .hdr-ico{width:31px;height:31px;border-radius:8px;background:var(--primary-color,#03a9f4);display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 2px 6px rgba(var(--rgb-primary-color,3,169,244),.32)}
 .hdr-txt{flex:1;min-width:0}
@@ -1473,11 +1881,20 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px)}
 .now-badge{position:absolute;top:4px;right:5px;width:5px;height:5px;border-radius:50%;background:var(--primary-color,#03a9f4);animation:pulse 2s ease-in-out infinite;flex-shrink:0}
 @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.45;transform:scale(.6)}}`;
 
-    const mondayStr = `${monday.getDate()}. ${t.months[monday.getMonth()]} ${monday.getFullYear()}`;
+    const cardTitle = (this._config.title && this._config.title.trim()) || t.card_title;
+    let subtitleStr;
+    if (mode === 'dynamic') {
+      const fmtShort = d => `${d.getDate()}. ${t.months[d.getMonth()]}`;
+      const lastDay  = days.length ? days[days.length - 1].date : monday;
+      subtitleStr = days.length > 1 ? `${fmtShort(monday)} – ${fmtShort(lastDay)}` : fmtShort(monday);
+    } else {
+      const mondayStr = `${monday.getDate()}. ${t.months[monday.getMonth()]} ${monday.getFullYear()}`;
+      subtitleStr = `${t.week_prefix} ${weekNum} · ${mondayStr}`;
+    }
     const wuStates    = this._getEntities().filter(e => e.device_id).map(e => this._webuntisState[e.id]).filter(Boolean);
     const wuLoading   = wuStates.some(s => s.loading);
     const wuFailed    = !wuLoading && wuStates.some(s => s.failed);
-    const wuCutoff    = !wuLoading && !wuFailed && wuStates.some(s => s.consecutiveEmpty >= 2);
+    const wuCutoff    = !wuLoading && !wuFailed && wuStates.some(s => s.coverageEnd && s.events.length === 0);
     const wuStatusIco = wuLoading ? 'mdi:alpha-u-box' : ((wuFailed || wuCutoff) ? 'mdi:cloud-cancel' : '');
     const wuStatusTtl = wuLoading ? t.wu_loading_title : (wuFailed ? t.wu_failed_title : t.wu_stopped_title);
 
@@ -1488,8 +1905,8 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px)}
         </svg>
       </div>
       <div class="hdr-txt">
-        <div class="hdr-title">${t.card_title}</div>
-        <div class="hdr-sub">${t.week_prefix} ${weekNum} · ${mondayStr}</div>
+        <div class="hdr-title">${tcEsc(cardTitle)}</div>
+        <div class="hdr-sub">${subtitleStr}</div>
       </div>
       ${wuStatusIco ? `<ha-icon class="wu-status-ico${wuLoading?' loading':''}" icon="${wuStatusIco}" title="${wuStatusTtl}"></ha-icon>` : ''}
       <div class="nav-grp">
@@ -1504,25 +1921,30 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px)}
       </button>
     </div>`;
 
+    const fabHTML = this._config.show_create_event_button === true ? `
+      <button class="ce-fab" id="ce-fab-btn" title="${t.ce_dialog_title}">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+      </button>` : '';
+
     const ents = this._getEntities();
     if (!ents.length) {
-      this.shadowRoot.innerHTML = `<style>${css}</style><ha-card>${hdrHTML}<div class="state"><div class="state-ico">📋</div>${t.state_no_entity}<br><small>${t.state_no_entity_hint}</small></div></ha-card>`;
+      this.shadowRoot.innerHTML = `<style>${css}</style><ha-card>${hdrHTML}<div class="state"><div class="state-ico">📋</div>${t.state_no_entity}<br><small>${t.state_no_entity_hint}</small></div>${fabHTML}</ha-card>`;
       this._bindNav(); return;
     }
     if (this._unavailable) {
-      this.shadowRoot.innerHTML = `<style>${css}</style><ha-card>${hdrHTML}<div class="state"><div class="state-ico">🔌</div>${t.state_unavailable}<br><small>${t.state_unavailable_hint}</small></div></ha-card>`;
+      this.shadowRoot.innerHTML = `<style>${css}</style><ha-card>${hdrHTML}<div class="state"><div class="state-ico">🔌</div>${t.state_unavailable}<br><small>${t.state_unavailable_hint}</small></div>${fabHTML}</ha-card>`;
       this._bindNav(); return;
     }
     if (this._loading && !this._events.length) {
-      this.shadowRoot.innerHTML = `<style>${css}</style><ha-card>${hdrHTML}<div class="state"><div class="state-ico">📅</div>${t.state_loading}</div></ha-card>`;
+      this.shadowRoot.innerHTML = `<style>${css}</style><ha-card>${hdrHTML}<div class="state"><div class="state-ico">📅</div>${t.state_loading}</div>${fabHTML}</ha-card>`;
       this._bindNav(); return;
     }
     if (this._error) {
-      this.shadowRoot.innerHTML = `<style>${css}</style><ha-card>${hdrHTML}<div class="state err"><div class="state-ico">⚠️</div>${tcEsc(this._error)}</div></ha-card>`;
+      this.shadowRoot.innerHTML = `<style>${css}</style><ha-card>${hdrHTML}<div class="state err"><div class="state-ico">⚠️</div>${tcEsc(this._error)}</div>${fabHTML}</ha-card>`;
       this._bindNav(); return;
     }
     if (!bounds.length && !hasAllDay) {
-      this.shadowRoot.innerHTML = `<style>${css}</style><ha-card>${hdrHTML}<div class="state"><div class="state-ico">🗓️</div>${t.state_no_events}</div></ha-card>`;
+      this.shadowRoot.innerHTML = `<style>${css}</style><ha-card>${hdrHTML}<div class="state"><div class="state-ico">🗓️</div>${t.state_no_events}</div>${fabHTML}</ha-card>`;
       this._bindNav(); return;
     }
 
@@ -1632,6 +2054,7 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px)}
         <div class="days-area">${dCols}</div>
         ${!timeLeft?`<div class="t-col r">${tLabels}</div>`:''}
       </div></div>
+      ${fabHTML}
     </ha-card>`;
 
     this._bindNav();
@@ -1641,19 +2064,31 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px)}
   _bindNav() {
     const s = this.shadowRoot;
     s.getElementById('prev-btn')?.addEventListener('click', () => {
-      this._weekOffset--; this._lastFetchKey = null; this._fetchEvents(); this._render();
+      if (this._wdMode() === 'dynamic') this._dayOffset -= Math.max(1, parseInt(this._config.dynamic_count) || 1);
+      else this._weekOffset--;
+      this._lastFetchKey = null; this._fetchEvents(); this._render();
     });
     s.getElementById('next-btn')?.addEventListener('click', () => {
-      this._weekOffset++; this._lastFetchKey = null; this._fetchEvents(); this._render();
+      if (this._wdMode() === 'dynamic') this._dayOffset += Math.max(1, parseInt(this._config.dynamic_count) || 1);
+      else this._weekOffset++;
+      this._lastFetchKey = null; this._fetchEvents(); this._render();
     });
     s.getElementById('today-btn')?.addEventListener('click', () => {
-      const home = this._computeHomeOffset();
-      if (this._weekOffset === home) return;
-      this._weekOffset = home; this._homeOffsetCache = home; this._lastFetchKey = null; this._fetchEvents(); this._render();
+      if (this._wdMode() === 'dynamic') {
+        if (this._dayOffset === 0) return;
+        this._dayOffset = 0;
+      } else {
+        const home = this._computeHomeOffset();
+        if (this._weekOffset === home) return;
+        this._weekOffset = home; this._homeOffsetCache = home;
+      }
+      this._lastFetchKey = null; this._fetchEvents(); this._render();
     });
     s.getElementById('ref-btn')?.addEventListener('click', () => {
+      Object.values(this._webuntisState).forEach(st => { st.failed = false; });
       this._lastFetchKey = null; this._fetchEvents(true); this._refreshWebuntisAnchor(true);
     });
+    s.getElementById('ce-fab-btn')?.addEventListener('click', () => this._openCreateEventDialog());
   }
 
   _bindEvents() {
