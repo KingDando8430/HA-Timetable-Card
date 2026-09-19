@@ -157,7 +157,7 @@ class TimetableCardEditor extends HTMLElement {
     this._editorKwIndex = null;
     this._editorEntIndex = null;
     this._kwRenameForceOpen = {};
-    this._wdModeForce = null;
+    this._wdModeForce = null; // null | 'fixed' | 'dynamic' — UI-only override, never written to yaml
   }
 
   setConfig(config) {
@@ -596,7 +596,7 @@ class TimetableCardEditor extends HTMLElement {
     s.getElementById('kw-hide-sw')?.addEventListener('change', e => this._setKw(i, 'hidden', e.target.checked));
   }
 
-  // ── Weekdays ────────────────────────────────────────────────────
+  // ── Weekdays (Fixed / Dynamic) ──────────────────────────────────
   _wdMode() {
     const c = this._config;
     const hasDynamic = c.dynamic_start !== TC_DEFAULT.dynamic_start || c.dynamic_count !== TC_DEFAULT.dynamic_count;
@@ -944,6 +944,7 @@ class TimetableCard extends HTMLElement {
     this._dayOffset    = 0;
     this._homeOffsetCache = 0;
     this._createDialog  = null;
+    this._createDialogSelect = null;
     this._clockTimer   = null;
     this._refreshTimer = null;
     this._retryTimer   = null;
@@ -1220,6 +1221,7 @@ class TimetableCard extends HTMLElement {
     };
   }
 
+  // Sunday ending the Nth week counted from the current real week's Monday (e.g. 12 weeks out).
   _computeWebuntisHorizon() {
     const anchorMonday = this._mondayOf(new Date());
     const horizon = this._addDays(anchorMonday, TC_WEBUNTIS_HORIZON_WEEKS * 7 - 1);
@@ -1227,6 +1229,9 @@ class TimetableCard extends HTMLElement {
     return horizon;
   }
 
+  // Cheap native-calendar-only scan (no WebUntis service call) to find how far the entity's own
+  // background sync already reaches within [today, horizon]. Returns the end of the latest native
+  // event found, null if there is none at all in that window, or undefined if the scan itself failed.
   async _scanWebuntisNativeCoverage(ent, horizon) {
     const today = new Date(); today.setHours(0, 0, 0, 0);
     const endEx = this._addDays(horizon, 1);
@@ -1258,16 +1263,19 @@ class TimetableCard extends HTMLElement {
       if (lastNativeEnd === undefined) continue; // native scan failed this cycle — retry later
 
       if (lastNativeEnd && lastNativeEnd >= horizon) {
+        // The calendar's own sync already reaches the horizon — nothing missing, drop any
+        // stale supplemental data so nothing ever renders twice.
         if (st.events.length || st.coverageEnd) { st.events = []; st.coverageFrom = null; st.coverageEnd = null; }
         st.failed = false;
         continue;
       }
 
+      // Never re-query days the native calendar already delivers — start right where it stops.
       const neededStart = (lastNativeEnd && lastNativeEnd > today) ? lastNativeEnd : today;
       const alreadyCovered = st.coverageFrom && st.coverageEnd
         && st.coverageFrom <= neededStart && st.coverageEnd >= horizon;
       if (alreadyCovered) continue;
-      if (st.failed) continue; 
+      if (st.failed) continue; // avoid repeatedly hammering the WebUntis login after a failure — a manual refresh clears this
 
       st.loading = true;
       this._render();
@@ -1282,6 +1290,8 @@ class TimetableCard extends HTMLElement {
           compact_tolerance_minutes: 0,
         }, undefined, undefined, true);
         const lessons = (result && result.response && result.response.lessons) || [];
+        // A single call already covers the whole remaining span (incl. any internal pause
+        // followed by more lessons), so it fully replaces the previous supplemental dataset.
         st.events = lessons.map(l => this._convertLesson(l, ent));
         st.coverageFrom = neededStart;
         st.coverageEnd = horizon;
@@ -1471,6 +1481,13 @@ class TimetableCard extends HTMLElement {
   }
 
   // ── Popup ────────────────────────────────────────────────────────
+  _calLabel(ent) {
+    if (!ent) return '';
+    return ent.device_id
+      ? `${tcS(this._hass).wu_label_prefix}: ${this._webuntisDeviceName(ent)}`
+      : (this._hass?.states?.[ent.id]?.attributes?.friendly_name || ent.id);
+  }
+
   _openPopup(ev) {
     this._closePopup();
     const t = tcS(this._hass);
@@ -1501,9 +1518,7 @@ class TimetableCard extends HTMLElement {
     if (rawDesc) rows += `<div class="pd-row"><div class="pd-ico">📝</div><div class="pd-val pd-desc">${tcEsc(rawDesc)}</div></div>`;
     if (calId && this._config.show_calendar !== false) {
       const calEnt   = this._getEntities().find(en => en.id === calId);
-      const calLabel = calEnt?.device_id
-        ? `${t.wu_label_prefix}: ${this._webuntisDeviceName(calEnt)}`
-        : (this._hass?.states?.[calId]?.attributes?.friendly_name || calId);
+      const calLabel = this._calLabel(calEnt) || calId;
       rows += `<div class="pd-row"><div class="pd-ico">📅</div><div class="pd-val pd-cal">${tcEsc(calLabel)}</div></div>`;
     }
 
@@ -1654,46 +1669,20 @@ textarea.tc-ce-plain{resize:none;min-height:64px;line-height:1.4;font-family:inh
       endTimeEl.style.display   = on ? 'none' : '';
     });
 
-    this._createDialogPicker = null;
     this._createDialogSelect = null;
     const calWrap = overlay.querySelector('#ce-cal-wrap');
-    const cardFirstEnt = this._getEntities()[0]?.id || '';
-    if (this._hass && window.customElements.get('ha-entity-picker')) {
-      // Preferred: Home Assistant's own searchable entity picker, when its component
-      // bundle has already been loaded somewhere in this session.
-      const picker = document.createElement('ha-entity-picker');
-      picker.hass = this._hass;
-      picker.includeDomains = ['calendar'];
-      picker.allowCustomEntity = false;
-      picker.value = cardFirstEnt;
-      calWrap.appendChild(picker);
-      this._createDialogPicker = picker;
-    } else {
-      // Fallback: a plain <select> listing every calendar entity Home Assistant knows about —
-      // works even when ha-entity-picker's bundle hasn't been loaded (e.g. opened straight
-      // from a normal dashboard view rather than the editor).
-      const calIds = this._hass
-        ? Object.keys(this._hass.states).filter(id => id.startsWith('calendar.')).sort((a, b) => {
-            const na = this._hass.states[a].attributes.friendly_name || a;
-            const nb = this._hass.states[b].attributes.friendly_name || b;
-            return na.localeCompare(nb);
-          })
-        : [];
-      const sel = document.createElement('select');
-      sel.className = 'tc-ce-select tc-ce-cal-select';
-      sel.innerHTML = calIds.length
-        ? calIds.map(id => {
-            const name = this._hass.states[id].attributes.friendly_name || id;
-            return `<option value="${tcEsc(id)}"${id === cardFirstEnt ? ' selected' : ''}>${tcEsc(name)}</option>`;
-          }).join('')
-        : `<option value="">${t.ce_calendar_none}</option>`;
-      calWrap.appendChild(sel);
-      this._createDialogSelect = sel;
-    }
+    const calEnts = this._getEntities();
+    const sel = document.createElement('select');
+    sel.className = 'tc-ce-select tc-ce-cal-select';
+    sel.innerHTML = calEnts.length
+      ? calEnts.map(ent => `<option value="${tcEsc(ent.id)}">${tcEsc(this._calLabel(ent))}</option>`).join('')
+      : `<option value="">${t.ce_calendar_none}</option>`;
+    calWrap.appendChild(sel);
+    this._createDialogSelect = sel;
   }
 
   _closeCreateEventDialog() {
-    if (this._createDialog) { this._createDialog.remove(); this._createDialog = null; this._createDialogPicker = null; this._createDialogSelect = null; }
+    if (this._createDialog) { this._createDialog.remove(); this._createDialog = null; this._createDialogSelect = null; }
   }
 
   async _submitCreateEvent() {
@@ -1706,8 +1695,7 @@ textarea.tc-ce-plain{resize:none;min-height:64px;line-height:1.4;font-family:inh
     const title       = ov.querySelector('#ce-title').value.trim();
     const location     = ov.querySelector('#ce-location').value.trim();
     const description  = ov.querySelector('#ce-description').value.trim();
-    const entityId      = this._createDialogPicker ? this._createDialogPicker.value
-                         : (this._createDialogSelect ? this._createDialogSelect.value : '');
+    const entityId      = this._createDialogSelect ? this._createDialogSelect.value : '';
     const allDay      = ov.querySelector('#ce-allday').checked;
     const startDate     = ov.querySelector('#ce-start-date').value;
     const startTime     = ov.querySelector('#ce-start-time').value || '00:00';
@@ -1745,6 +1733,8 @@ textarea.tc-ce-plain{resize:none;min-height:64px;line-height:1.4;font-family:inh
 
     try {
       if (repeat === 'none') {
+        // The stable, universally-supported REST service — no rrule support, so this path
+        // is used whenever no repeat was requested.
         const fields = { summary: title };
         if (description) fields.description = description;
         if (location) fields.location = location;
@@ -1757,6 +1747,8 @@ textarea.tc-ce-plain{resize:none;min-height:64px;line-height:1.4;font-family:inh
         }
         await this._hass.callService('calendar', 'create_event', fields, { entity_id: entityId });
       } else {
+        // Recurrence is only exposed via the frontend WebSocket command — support for it
+        // depends on the target calendar integration and may fail there.
         const rruleMap = { daily: 'FREQ=DAILY', weekly: 'FREQ=WEEKLY', monthly: 'FREQ=MONTHLY', yearly: 'FREQ=YEARLY' };
         const event = { summary: title, rrule: rruleMap[repeat] };
         if (description) event.description = description;
