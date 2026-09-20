@@ -1229,9 +1229,6 @@ class TimetableCard extends HTMLElement {
     return horizon;
   }
 
-  // Cheap native-calendar-only scan (no WebUntis service call) to find how far the entity's own
-  // background sync already reaches within [today, horizon]. Returns the end of the latest native
-  // event found, null if there is none at all in that window, or undefined if the scan itself failed.
   async _scanWebuntisNativeCoverage(ent, horizon) {
     const today = new Date(); today.setHours(0, 0, 0, 0);
     const endEx = this._addDays(horizon, 1);
@@ -1250,32 +1247,43 @@ class TimetableCard extends HTMLElement {
     }
   }
 
+  _webuntisGapInView(ent, st) {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const days  = this._weekDays(tcS(this._hass));
+    const known = [...this._events.filter(ev => ev._entityId === ent.id), ...st.events];
+    for (const day of days) {
+      if (day.date < today) continue; // never look into the past
+      const dayEnd = this._addDays(day.date, 1);
+      if (!known.some(ev => this._edt(ev, 'start') < dayEnd && this._edt(ev, 'end') > day.date)) return true;
+    }
+    return false;
+  }
+
   async _checkWebuntisFetch() {
     if (!this._hass) return;
-    const horizon = this._computeWebuntisHorizon();
     const today = new Date(); today.setHours(0, 0, 0, 0);
     for (const ent of this._getEntities()) {
       if (!ent.device_id) continue;
       const st = (this._webuntisState[ent.id] ||= { events: [], coverageFrom: null, coverageEnd: null, loading: false, failed: false });
       if (st.loading) continue;
 
+      if (!this._webuntisGapInView(ent, st)) continue;
+
+      const horizon = this._computeWebuntisHorizon();
       const lastNativeEnd = await this._scanWebuntisNativeCoverage(ent, horizon);
       if (lastNativeEnd === undefined) continue; // native scan failed this cycle — retry later
 
       if (lastNativeEnd && lastNativeEnd >= horizon) {
-        // The calendar's own sync already reaches the horizon — nothing missing, drop any
-        // stale supplemental data so nothing ever renders twice.
         if (st.events.length || st.coverageEnd) { st.events = []; st.coverageFrom = null; st.coverageEnd = null; }
         st.failed = false;
         continue;
       }
 
-      // Never re-query days the native calendar already delivers — start right where it stops.
       const neededStart = (lastNativeEnd && lastNativeEnd > today) ? lastNativeEnd : today;
       const alreadyCovered = st.coverageFrom && st.coverageEnd
         && st.coverageFrom <= neededStart && st.coverageEnd >= horizon;
       if (alreadyCovered) continue;
-      if (st.failed) continue; // avoid repeatedly hammering the WebUntis login after a failure — a manual refresh clears this
+      if (st.failed) continue;
 
       st.loading = true;
       this._render();
@@ -1290,8 +1298,6 @@ class TimetableCard extends HTMLElement {
           compact_tolerance_minutes: 0,
         }, undefined, undefined, true);
         const lessons = (result && result.response && result.response.lessons) || [];
-        // A single call already covers the whole remaining span (incl. any internal pause
-        // followed by more lessons), so it fully replaces the previous supplemental dataset.
         st.events = lessons.map(l => this._convertLesson(l, ent));
         st.coverageFrom = neededStart;
         st.coverageEnd = horizon;
