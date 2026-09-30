@@ -28,12 +28,13 @@ A custom Home Assistant Lovelace card that displays calendar events in a weekly 
 * 📍 **Location and notes** — optionally display event locations and descriptions
 * 📆 **Custom weekdays** — show only the days you want, such as Monday to Friday
 * ⏺️ **Live "Now" indicator** — highlights the current time with a live indicator line
-* 🔄 **Automatic updates** — refreshes automatically at configurable intervals
 * 🎯 **Flexible keyword matching** — match against the event name, description, or location
 * ✂️ **First/last day only** — collapse multi-day all-day events down to just their first or last day
 * ⏭️ **Auto-switch week** — automatically jumps to the next week once the visible days are over
 * 🔁 **Dynamic day view** — show a rolling window (e.g. today + the next 2 days) instead of a fixed week
 * ➕ **Quick add-event button** — optionally add a floating button to create new calendar events without leaving the card
+* 🗂️ **Calendar filter** — optionally show or hide single calendars from a button next to the title; the selection is remembered in the browser
+* 🕓 **Custom time window** — show only a chosen time range (e.g. 08:00–16:00) and optionally get a small `+n` hint for events outside of it
 
 ---
 
@@ -105,16 +106,6 @@ keywords:
     color: "#9c27b0"
 ```
 
-Instead of a fixed set of weekdays, it can also show a rolling window relative to today:
-
-```yaml
-type: custom:timetable-card
-entities:
-  - id: calendar.school
-dynamic_start: today
-dynamic_count: 3
-```
-
 ### Options
 
 | Option | Default | Description |
@@ -129,7 +120,7 @@ dynamic_count: 3
 | `show_calendar` | `true` | Show the calendar name in the event popup |
 | `show_now_line` | `true` | Show the moving current-time line |
 | `time_position` | `left` | Time axis position: `left` or `right` |
-| `time_interval` | `event_based` | Grid lines: `event_based`, `15`, `30`, `60` |
+| `time_interval` | `event_based` | Time labels and grid lines: `event_based` (at every event start/end) or a fixed `15`, `30`, `60` minute interval (labels only at these intervals) |
 | `px_per_min` | `1.4` | Pixel height per minute (controls zoom level) |
 | `refresh_interval` | `auto` | Reload interval: `auto`, `5`, `10`, `15`, `30`, `60`, `120`, `180`, `360` minutes |
 | `first_day_only` | `false` | Show multi-day all-day events only on their first day |
@@ -137,15 +128,35 @@ dynamic_count: 3
 | `show_description_indicator` | `false` | Show a small ⓘ on events that have a description |
 | `auto_switch_week` | `false` | Automatically show next week once the selected weekdays have passed (Fixed weekdays only) |
 | `show_create_event_button` | `false` | Show a floating button on the card for quickly adding a new calendar event |
+| `show_calendar_filter` | `false` | Show a calendar-filter button next to the title to show or hide single calendars (needs at least two calendars). The selection is stored in the browser |
+| `time_range` | — | Show only a time window: `start` and `end` as `HH:MM`. Events outside of it are left out, events crossing its edges are cut off. Not set = automatic |
+| `show_out_of_range_hint` | `false` | With `time_range`: show a small `+n` badge at the top/bottom of a day for events before/after the window |
+| `fontsize` | — | Text size in px per element (see below) |
 | `keywords` | `[]` | Keyword rules (see below) 
 
-The visual editor's **Weekdays** section offers a **Fixed** / **Dynamic** switch, which only decides which of the controls above are shown — it isn't itself saved to the configuration.
+### Font Size Options
+
+`fontsize` is a list with one entry per element. Only the elements you want to change need to be listed:
+
+```yaml
+fontsize:
+  - title: 16
+  - event_title: 12
+```
+
+| Element | Default (px) |
+|---|---|
+| `title` | `14.5` |
+| `timestamps` | `8.5` |
+| `event_title` | `11` |
+| `event_description` | `9` |
+| `event_location` | `9.5` |
 
 ### Keyword Rule Options
 
 | Option | Default | Description |
 |---|---|---|
-| `keyword` | — | Text to match against the selected source |
+| `keyword` | — | Text to match against the selected source. In YAML this can also be a list — an event matches when any entry matches |
 | `color` | — | Highlight color (hex) |
 | `exact_match` | `true` | `true` = exact match, `false` = contains match |
 | `color_mode` | `block` | `block` = filled background, `border` = left border only |
@@ -157,6 +168,20 @@ The visual editor's **Weekdays** section offers a **Fixed** / **Dynamic** switch
 | `partial_rename_enabled` | `false` | Replace only a part of the label instead of the whole label |
 | `partial_rename_mode` | `keyword` | `keyword` = replaces the keyword in the label, `text` = replaces a custom string |
 | `partial_rename_text` | `""` | The specific text to replace when `partial_rename_mode` is `text` |
+
+Several keywords can share one rule by listing them (YAML only):
+
+```yaml
+keywords:
+  - keyword:
+      - change
+      - irregular
+    color: "#21b15e"
+    exact_match: false
+    color_mode: block
+  - keyword: cancelled
+    color: "#ff0000"
+```
 
 ---
 
