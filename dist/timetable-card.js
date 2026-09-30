@@ -1968,7 +1968,7 @@ class TimetableCard extends HTMLElement {
     let rows = '';
     if (timeStr) rows += `<div class="pd-row"><div class="pd-ico">🕐</div><div class="pd-val">${timeStr}</div></div>`;
     const teacher = (ev._teacher || '').trim();
-    if (teacher) rows += `<div class="pd-row"><div class="pd-ico">👤</div><div class="pd-val">${tcEsc(teacher)}</div></div>`;
+    if (teacher) rows += `<div class="pd-row"><div class="pd-ico">👨‍🏫</div><div class="pd-val">${tcEsc(teacher)}</div></div>`;
     if (loc)     rows += `<div class="pd-row"><div class="pd-ico">📍</div><div class="pd-val">${tcEsc(loc)}</div></div>`;
     if (rawDesc) rows += `<div class="pd-row"><div class="pd-ico">📝</div><div class="pd-val pd-desc">${tcEsc(rawDesc)}</div></div>`;
     if (calId && this._config.show_calendar !== false) {
