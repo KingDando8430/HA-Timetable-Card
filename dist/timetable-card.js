@@ -94,8 +94,8 @@ const TC_DEFAULT = {
   refresh_interval: 'auto',
   title: '',
   weekdays: [...TC_DAY_TOKENS],
-  dynamic_start: 'today',
-  dynamic_count: 1,
+  dynamic_start: null,
+  dynamic_count: null,
   first_day_only: false,
   last_day_only: false,
   show_description_indicator: false,
@@ -172,6 +172,10 @@ function tcNeedsWeekdayMigration(arr) {
 // Converts a legacy numeric weekdays array to the new 'Mon'..'Sun' token array, preserving order.
 function tcMigrateWeekdays(arr) {
   return arr.map(v => (typeof v === 'number' ? (TC_DAY_TOKENS[v] || v) : v));
+}
+// Dynamic mode is on as soon as dynamic_start or dynamic_count is set — even to today / 1.
+function tcIsDynamic(cfg) {
+  return !!cfg && (cfg.dynamic_start != null || cfg.dynamic_count != null);
 }
 // All-day chip colours: tinted background + coloured text, always built from a sanitised colour.
 function tcChipStyle(col) {
@@ -254,7 +258,6 @@ class TimetableCardEditor extends HTMLElement {
     this._editorKwIndex = null;
     this._editorEntIndex = null;
     this._kwRenameForceOpen = {};
-    this._wdModeForce = null; // null | 'fixed' | 'dynamic' — UI-only override, never written to yaml
   }
 
   setConfig(config) {
@@ -295,6 +298,8 @@ class TimetableCardEditor extends HTMLElement {
         continue;
       }
       if (!(k in TC_DEFAULT)) { out[k] = cfg[k]; continue; } // e.g. 'type' — always kept
+      // dynamic_count already marks Dynamic mode and today is the implied start, so `dynamic_count: 1` is enough
+      if (k === 'dynamic_start' && cfg[k] === 'today' && cfg.dynamic_count != null) continue;
       const def  = TC_DEFAULT[k];
       const same = Array.isArray(def) ? JSON.stringify(cfg[k]) === JSON.stringify(def) : cfg[k] === def;
       if (!same) out[k] = cfg[k];
@@ -719,9 +724,7 @@ class TimetableCardEditor extends HTMLElement {
 
   // ── Weekdays (Fixed / Dynamic) ──────────────────────────────────
   _wdMode() {
-    const c = this._config;
-    const hasDynamic = c.dynamic_start !== TC_DEFAULT.dynamic_start || c.dynamic_count !== TC_DEFAULT.dynamic_count;
-    return this._wdModeForce || (hasDynamic ? 'dynamic' : 'fixed');
+    return tcIsDynamic(this._config) ? 'dynamic' : 'fixed';
   }
 
   _renderWeekdaysBlock() {
@@ -761,7 +764,10 @@ class TimetableCardEditor extends HTMLElement {
     el.querySelectorAll('[data-wdmode]').forEach(b => {
       b.addEventListener('click', () => {
         if (this._wdMode() === b.dataset.wdmode) return;
-        this._wdModeForce = b.dataset.wdmode;
+        const c = this._config;
+        this._dispatch(b.dataset.wdmode === 'dynamic'
+          ? { ...c, dynamic_start: c.dynamic_start ?? 'today', dynamic_count: c.dynamic_count ?? 1 }
+          : { ...c, dynamic_start: TC_DEFAULT.dynamic_start, dynamic_count: TC_DEFAULT.dynamic_count });
         this._renderWeekdaysBlock();
       });
     });
@@ -772,14 +778,12 @@ class TimetableCardEditor extends HTMLElement {
     } else {
       el.querySelectorAll('[data-dynf]').forEach(b => {
         b.addEventListener('click', () => {
-          this._wdModeForce = 'dynamic';
-          this._dispatch({ ...this._config, dynamic_start: b.dataset.dynf, weekdays: [...TC_DEFAULT.weekdays] });
+          this._dispatch({ ...this._config, dynamic_start: b.dataset.dynf, dynamic_count: this._config.dynamic_count ?? 1, weekdays: [...TC_DEFAULT.weekdays] });
           this._renderWeekdaysBlock();
         });
       });
       el.querySelector('#wd-dyn-count').addEventListener('change', e => {
         const v = Math.min(14, Math.max(1, parseInt(e.target.value) || 1));
-        this._wdModeForce = 'dynamic';
         this._dispatch({ ...this._config, dynamic_count: v, weekdays: [...TC_DEFAULT.weekdays] });
         this._renderWeekdaysBlock();
       });
@@ -800,7 +804,6 @@ class TimetableCardEditor extends HTMLElement {
         const i = +b.dataset.i;
         if (wd.includes(i)) { if (wd.length > 1) wd = wd.filter(x => x !== i); }
         else wd = [...wd, i].sort((a, b) => a - b);
-        this._wdModeForce = 'fixed';
         this._dispatch({
           ...this._config,
           weekdays: wd.map(idx => TC_DAY_TOKENS[idx]),
@@ -1300,8 +1303,7 @@ class TimetableCard extends HTMLElement {
   }
 
   _wdMode() {
-    const c = this._config;
-    return (c.dynamic_start !== TC_DEFAULT.dynamic_start || c.dynamic_count !== TC_DEFAULT.dynamic_count) ? 'dynamic' : 'fixed';
+    return tcIsDynamic(this._config) ? 'dynamic' : 'fixed';
   }
 
   _computeHomeOffset() {
