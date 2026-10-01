@@ -113,8 +113,8 @@ keywords:
 | `entities` | `[]` | List of calendar entity IDs with optional `color` |
 | `title` | `""` | Custom header text (empty = the built-in "Timetable" label) |
 | `weekdays` | `[Mon,Tue,Wed,Thu,Fri,Sat,Sun]` | Visible weekdays: `Mon`…`Sun` |
-| `dynamic_start` | `today` | Used instead of `weekdays` for a rolling day view: `today` or `tomorrow` |
-| `dynamic_count` | `1` | With `dynamic_start`: how many consecutive days to show |
+| `dynamic_start` | `today` | Start of the rolling day view: `today` or `tomorrow` |
+| `dynamic_count` | — | With `dynamic_start`: how many consecutive days to show — `dynamic_count: 1` alone means today, 1 day |
 | `show_location` | `true` | Show event location below title |
 | `show_notes` | `true` | Show event description as third line |
 | `show_calendar` | `true` | Show the calendar name in the event popup |
