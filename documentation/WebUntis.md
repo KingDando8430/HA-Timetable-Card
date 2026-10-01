@@ -17,7 +17,10 @@ Select the `Timetable Card - WebUntis` in the entity-based Card picker or select
 |---|---|---|
 | `device_id` | — | Set automatically when adding a WebUntis device |
 | `subject_display` | `short` | `short` or `long` subject names in lesson titles |
-| `room_display` | `short` | `short` or `long` room names in lesson locations |
+| `teacher_display` | `short` | `short`, `long` or `hide` names of your teachers |
+| `room_display` | `short` | `short`, `long` or `hide` room names in lesson locations |
+
+> The subject is the lesson title, so `subject_display` has no `hide` option.
 
 ### Automatic Look-ahead
 
