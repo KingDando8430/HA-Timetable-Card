@@ -110,7 +110,7 @@ keywords:
 
 | Option | Default | Description |
 |---|---|---|
-| `entities` | `[]` | List of calendar entity IDs with optional `color` |
+| `entities` | `[]` | List of calendar entity IDs with optional `color` and `visible` (see below) |
 | `title` | `""` | Custom header text (empty = the built-in "Timetable" label) |
 | `weekdays` | `[Mon,Tue,Wed,Thu,Fri,Sat,Sun]` | Visible weekdays: `Mon`…`Sun` |
 | `dynamic_start` | `today` | Start of the rolling day view: `today` or `tomorrow` |
@@ -133,6 +133,18 @@ keywords:
 | `show_out_of_range_hint` | `false` | With `time_range`: show a small `+n` badge at the top/bottom of a day for events before/after the window |
 | `fontsize` | — | Text size in px per element (see below) |
 | `keywords` | `[]` | Keyword rules (see below) 
+
+### Calendar Visibility (YAML only)
+
+Each entity accepts `visible`. A calendar with `visible: false` stays configured but its events are hidden. 
+
+```yaml
+entities:
+  - id: calendar.personal
+    visible: true
+  - id: calendar.work
+    visible: false
+```
 
 ### Font Size Options
 
