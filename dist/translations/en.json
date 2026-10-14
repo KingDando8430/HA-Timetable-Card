@@ -172,5 +172,10 @@
   "fs_sample_desc": "Bring calculator",
   "wu_teacher_title": "Teacher Name",
   "wu_teacher_sub": "How teachers are shown",
-  "wu_hide": "Hide"
+  "wu_hide": "Hide",
+  "wu_teacher_checking": "Checking calendar data…",
+  "wu_teacher_unavail": "Unavailable — the calendar description isn’t “JSON”",
+  "wu_teacher_note": "Teacher names are read from the calendar description. To show them, turn on “JSON” as the calendar description in your WebUntis integration settings.",
+  "wu_adv_funcs_title": "Advanced WebUntis Features",
+  "wu_adv_funcs_hold": "Hold to turn off Advanced WebUntis Features"
 }
