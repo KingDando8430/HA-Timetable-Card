@@ -172,5 +172,10 @@
   "fs_sample_desc": "Taschenrechner mitbringen",
   "wu_teacher_title": "Lehrer Name",
   "wu_teacher_sub": "Wie Lehrer angezeigt werden",
-  "wu_hide": "Ausblenden"
+  "wu_hide": "Ausblenden",
+  "wu_teacher_checking": "Kalenderdaten werden geprüft…",
+  "wu_teacher_unavail": "Nicht verfügbar – Kalenderbeschreibung ist nicht „JSON“",
+  "wu_teacher_note": "Lehrernamen werden aus der Kalenderbeschreibung gelesen. Aktiviere dafür in den WebUntis-Einstellungen „JSON“ als Kalenderbeschreibung.",
+  "wu_adv_funcs_title": "Erweiterte WebUntis Funktionen",
+  "wu_adv_funcs_hold": "Halten, um Erweiterte WebUntis Funktionen zu deaktivieren"
 }
