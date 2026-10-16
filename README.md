@@ -77,7 +77,9 @@ entities:
   - id: calendar.sports
     color: "#4CAF50"
   - id: calendar.webuntis_max
-    device_id: 088b5755644095d477f2de
+    webuntis:
+      device_id: 088b5755644095d477f2de
+      show_homework: true
 weekdays:
   - Mon
   - Tue
@@ -110,7 +112,7 @@ keywords:
 
 | Option | Default | Description |
 |---|---|---|
-| `entities` | `[]` | List of calendar entity IDs with optional `color` |
+| `entities` | `[]` | List of calendar entity IDs with optional `color`, `visible` (see below) and `webuntis` ([WebUntis options](https://github.com/KingDando8430/HA-Timetable-Card/blob/main/documentation/WebUntis.md)) |
 | `title` | `""` | Custom header text (empty = the built-in "Timetable" label) |
 | `weekdays` | `[Mon,Tue,Wed,Thu,Fri,Sat,Sun]` | Visible weekdays: `Mon`…`Sun` |
 | `dynamic_start` | `today` | Start of the rolling day view: `today` or `tomorrow` |
@@ -133,6 +135,18 @@ keywords:
 | `show_out_of_range_hint` | `false` | With `time_range`: show a small `+n` badge at the top/bottom of a day for events before/after the window |
 | `fontsize` | — | Text size in px per element (see below) |
 | `keywords` | `[]` | Keyword rules (see below) 
+
+### Calendar Visibility (YAML only)
+
+Each entity accepts `visible`. A calendar with `visible: false` stays configured but its events are hidden. 
+
+```yaml
+entities:
+  - id: calendar.personal
+    visible: true
+  - id: calendar.work
+    visible: false
+```
 
 ### Font Size Options
 
@@ -222,6 +236,8 @@ Examples with WebUntis Integration:
 - Regular lessons displayed in the timetable
 - Cancelled lessons highlighted in red
 - Room changes highlighted in yellow
+- View Teacher names for every lesson
+- Homework shown in the lesson pop-up
 
 ---
 

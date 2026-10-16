@@ -2,10 +2,10 @@
 // Home Assistant Timetable Card
 // Author: KingDando8430
 // https://github.com/KingDando8430/HA-Timetable-Card
-// Version: 1.5.0
+// Version: 1.6.0
 // ═══════════════════════════════════════════════════════════════════
 
-const TC_VERSION = '1.5.0';
+const TC_VERSION = '1.6.0';
 
 window.customCards = window.customCards || [];
 window.customCards.push({
@@ -21,7 +21,7 @@ window.customCards.push({
     if (meta?.platform !== 'webuntis' || !meta.device_id) return base;
     return [
       base,
-      { label: 'WebUntis', config: { type: 'custom:timetable-card', entities: [{ id: entityId, device_id: meta.device_id }] } },
+      { label: 'WebUntis', config: { type: 'custom:timetable-card', entities: [{ id: entityId, webuntis: { device_id: meta.device_id } }] } },
     ];
   },
 });
@@ -78,6 +78,7 @@ function tcS(hass) {
 const TC_DAY_KEYS   = ['monday','tuesday','wednesday','thursday','friday','saturday','sunday'];
 const TC_DAY_TOKENS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 const TC_WEBUNTIS_HORIZON_WEEKS = 12;
+const TC_WEBUNTIS_STALE_MS = 30 * 60_000; // look-ahead lessons on screen are refreshed from WebUntis at most this often (a manual refresh always)
 
 const TIME_W     = 50;
 const PADDING_TOP = 12;
@@ -148,9 +149,46 @@ function tcRgb(hex) {
   if (f.length !== 6) return null;
   return { r:parseInt(f.slice(0,2),16), g:parseInt(f.slice(2,4),16), b:parseInt(f.slice(4,6),16) };
 }
+// WebUntis options live in a `webuntis:` group of the entity. Internally (card + editor) they are handled as flat keys,
+// so the group is flattened here. Old flat configs (device_id, subject_display, … directly on the entity) keep working.
+const TC_WU_KEYS = ['device_id', 'subject_display', 'teacher_display', 'room_display', 'show_homework'];
 function tcNormalizeEntities(raw) {
   if (!Array.isArray(raw)) return [];
-  return raw.map(e => typeof e === 'string' ? { id: e, color: null } : e);
+  return raw.map(e => {
+    if (typeof e === 'string') return { id: e, color: null };
+    const g = e && typeof e === 'object' && e.webuntis && typeof e.webuntis === 'object' ? e.webuntis : null;
+    if (!g) return e;
+    const { webuntis, ...flat } = e;
+    for (const k of TC_WU_KEYS) if (g[k] !== undefined && g[k] !== null) flat[k] = g[k];
+    return flat;
+  });
+}
+// The homework sensor belongs to the WebUntis device: found through the device_id, never through a configured entity_id.
+// Preferred: the registry's translation key. Fallback: any sensor of the device that carries a `homeworks` list.
+function tcFindHomeworkSensor(hass, deviceId) {
+  if (!hass || !deviceId) return null;
+  let fallback = null;
+  for (const [eid, meta] of Object.entries(hass.entities || {})) {
+    if (!meta || meta.device_id !== deviceId || !eid.startsWith('sensor.')) continue;
+    if (meta.translation_key === 'homework_list') return eid;
+    if (!fallback && Array.isArray(hass.states?.[eid]?.attributes?.homeworks)) fallback = eid;
+  }
+  return fallback;
+}
+// Reads `homeworks` of the sensor. 
+function tcHomeworkList(hass, sensorId) {
+  const arr = sensorId ? hass?.states?.[sensorId]?.attributes?.homeworks : null;
+  if (!Array.isArray(arr)) return [];
+  const out = [];
+  for (const h of arr) {
+    if (!h || typeof h !== 'object') continue;
+    const text    = typeof h.text === 'string' ? h.text.trim() : '';
+    const subject = typeof h.subject === 'string' ? h.subject.trim().toLowerCase() : '';
+    const due     = typeof h.due_date === 'string' ? h.due_date.trim().slice(0, 10) : '';
+    if (!text || !subject || !/^\d{4}-\d{2}-\d{2}$/.test(due)) continue;
+    out.push({ subject, due, text });
+  }
+  return out;
 }
 // Accepts either a legacy numeric weekday (0-6, Mon-Sun) or a new 'Mon'..'Sun' token
 // and returns the 0-6 index, or null if unrecognised.
@@ -185,6 +223,46 @@ function tcChipStyle(col) {
   return rgb
     ? `background:rgba(${rgb.r},${rgb.g},${rgb.b},.133);color:${safe}`
     : `background:color-mix(in srgb,${safe} 13%,transparent);color:${safe}`;
+}
+// `visible` is yaml-only: false hides a calendar without removing it from the configured entities.
+// Accepts a boolean or a templated string ('false' / 'off' / 'no' / '0').
+function tcEntityVisible(e) {
+  if (!e || typeof e !== 'object') return true;
+  const v = e.visible;
+  if (v === false || v === 0) return false;
+  if (typeof v === 'string') return !['false', 'off', 'no', '0'].includes(v.trim().toLowerCase());
+  return true;
+}
+// WebUntis teacher names: 'short' / 'long' / 'hide'. Hidden unless the user switches them on.
+function tcTeacherPref(ent) {
+  return ent && ['short', 'long'].includes(ent.teacher_display) ? ent.teacher_display : 'hide';
+}
+function tcPickNames(arr, pref) {
+  if (pref === 'hide' || !Array.isArray(arr) || !arr.length) return '';
+  const key = pref === 'long' ? 'long_name' : 'name';
+  return arr.map(x => (x && (x[key] || x.name)) || '').filter(Boolean).join(', ');
+}
+// The WebUntis calendar can carry each lesson as JSON in the event description.
+// Returns { lesson, teachers } for such a description, else null.
+//  · lesson: the full parsed object (null when only the teachers array could be read)
+function tcLessonJson(desc) {
+  if (typeof desc !== 'string') return null;
+  const s = desc.trim();
+  if (!s || s.indexOf('"teachers"') === -1) return null;
+  if (s[0] === '{') {
+    try {
+      const o = JSON.parse(s);
+      if (o && typeof o === 'object' && Array.isArray(o.teachers)) return { lesson: o, teachers: o.teachers };
+    } catch { /* fall through to the partial read below */ }
+  }
+  const m = s.match(/"teachers"\s*:\s*(\[[^\]]*\])/);
+  if (m) {
+    try {
+      const arr = JSON.parse(m[1]);
+      if (Array.isArray(arr)) return { lesson: null, teachers: arr };
+    } catch { /* ignore */ }
+  }
+  return null;
 }
 // `keyword` may be a string or (yaml) a list of strings. Returns the non-empty entries.
 function tcKwList(kw) {
@@ -258,10 +336,12 @@ class TimetableCardEditor extends HTMLElement {
     this._editorKwIndex = null;
     this._editorEntIndex = null;
     this._kwRenameForceOpen = {};
+    this._wuJson = {};
   }
 
   setConfig(config) {
     if (config.entity && !config.entities) config = { ...config, entities: [config.entity] };
+    if (Array.isArray(config.entities)) config = { ...config, entities: tcNormalizeEntities(config.entities) };
     this._config = { ...TC_DEFAULT, ...config };
     this._render();
   }
@@ -310,12 +390,15 @@ class TimetableCardEditor extends HTMLElement {
   _minimizeEntity(e) {
     const out = { id: e.id };
     if (e.color) out.color = e.color;
-    if (e.device_id) {
-      out.device_id = e.device_id;
-      if (e.subject_display && e.subject_display !== 'short') out.subject_display = e.subject_display;
-      if (e.teacher_display && e.teacher_display !== 'short') out.teacher_display = e.teacher_display;
-      if (e.room_display && e.room_display !== 'short') out.room_display = e.room_display;
-    }
+    const wu = {};
+    if (e.device_id) wu.device_id = e.device_id;
+    if (e.subject_display && e.subject_display !== 'short') wu.subject_display = e.subject_display;
+    if (e.teacher_display && e.teacher_display !== 'hide') wu.teacher_display = e.teacher_display;
+    if (e.room_display && e.room_display !== 'short') wu.room_display = e.room_display;
+    if (e.show_homework === true) wu.show_homework = true;
+    if (Object.keys(wu).length) out.webuntis = wu;
+    // yaml-only key — never shown in the editor, but it has to survive every editor save
+    if (e.visible !== undefined && e.visible !== null) out.visible = e.visible;
     return out;
   }
 
@@ -347,7 +430,7 @@ class TimetableCardEditor extends HTMLElement {
     if (meta?.platform === 'webuntis' && meta.device_id) {
       entry.device_id = meta.device_id;
       entry.subject_display = 'short';
-      entry.teacher_display = 'short';
+      entry.teacher_display = 'hide';
       entry.room_display = 'short';
     }
     this._set('entities', [...ents, entry]);
@@ -389,7 +472,7 @@ class TimetableCardEditor extends HTMLElement {
               </button>
             </div>
             <button class="kw-adv-btn ent-adv-btn" data-id="${tcEsc(e.id)}">
-              <span>${t.adv_config_btn}</span>
+              <span>${t.wu_adv_funcs_title}</span>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg>
             </button>`;
           }
@@ -421,6 +504,7 @@ class TimetableCardEditor extends HTMLElement {
     el.querySelectorAll('.ent-adv-btn').forEach(b => {
       b.addEventListener('click', () => {
         this._editorEntIndex = this._getEntities().findIndex(e => e.id === b.dataset.id);
+        delete this._wuJson[b.dataset.id]; // the JSON check runs fresh each time this page opens
         this._editorPage = 'wu-advanced';
         this._render();
       });
@@ -434,9 +518,22 @@ class TimetableCardEditor extends HTMLElement {
     const t   = tcS(this._hass);
     const ent = (this._config.entities || [])[i];
     if (!ent || !ent.device_id) { this._editorPage = 'main'; this._render(); return; }
+    clearTimeout(this._wuOffTimer);
     const subj = ent.subject_display === 'long' ? 'long' : 'short';
     const room  = ['long', 'hide'].includes(ent.room_display) ? ent.room_display : 'short';
-    const teach = ['long', 'hide'].includes(ent.teacher_display) ? ent.teacher_display : 'short';
+    // JSON check of the calendar descriptions: undefined → not yet run, then 'checking' | 'ok' | 'none' | 'unknown'
+    let chk = this._wuJson[ent.id];
+    const startProbe = chk === undefined;
+    if (startProbe) chk = this._wuJson[ent.id] = 'checking';
+    const teach = chk === 'none' ? 'hide' : tcTeacherPref(ent);
+    const tDis  = chk === 'checking' || chk === 'none';
+    const tSub  = chk === 'checking' ? t.wu_teacher_checking : (chk === 'none' ? t.wu_unavail : t.wu_teacher_sub);
+    const tOff  = tDis ? ' disabled' : '';
+    // homework needs the JSON calendar description like teacher names, and the homework sensor of the device
+    const hwFound = !!tcFindHomeworkSensor(this._hass, ent.device_id);
+    const hwDis   = tDis || !hwFound;
+    const hwSub   = chk === 'checking' ? t.wu_teacher_checking : (chk === 'none' ? t.wu_unavail : (hwFound ? t.wu_hw_sub : t.wu_hw_unavail));
+    const hwOn    = ent.show_homework === true && chk !== 'none';
     const name = tcEsc(this._webuntisDeviceName(ent));
 
     this.shadowRoot.innerHTML = `
@@ -446,7 +543,7 @@ class TimetableCardEditor extends HTMLElement {
     <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
   </button>
   <div class="nav-hdr-txt">
-    <div class="nav-hdr-title">${t.adv_config_btn}</div>
+    <div class="nav-hdr-title">${t.wu_adv_funcs_title}</div>
     <div class="nav-hdr-sub">${tcEsc(t.wu_label_prefix)}: ${name}</div>
   </div>
 </div>
@@ -460,12 +557,12 @@ class TimetableCardEditor extends HTMLElement {
       <button class="seg-o${subj==='long'?' on':''}" data-f="subject_display" data-v="long">${t.wu_long}</button>
     </div>
   </div>
-  <div class="row wrap">
-    <div><div class="rl">${t.wu_teacher_title}</div><div class="rs">${t.wu_teacher_sub}</div></div>
+  <div class="row wrap${tDis?' dis':''}" id="wu-teacher-row">
+    <div><div class="rl">${t.wu_teacher_title}</div><div class="rs">${tSub}</div></div>
     <div class="seg seg3">
-      <button class="seg-o${teach==='short'?' on':''}" data-f="teacher_display" data-v="short">${t.wu_short}</button>
-      <button class="seg-o${teach==='long'?' on':''}" data-f="teacher_display" data-v="long">${t.wu_long}</button>
-      <button class="seg-o${teach==='hide'?' on':''}" data-f="teacher_display" data-v="hide">${t.wu_hide}</button>
+      <button class="seg-o${teach==='short'?' on':''}" data-f="teacher_display" data-v="short"${tOff}>${t.wu_short}</button>
+      <button class="seg-o${teach==='long'?' on':''}" data-f="teacher_display" data-v="long"${tOff}>${t.wu_long}</button>
+      <button class="seg-o${teach==='hide'?' on':''}" data-f="teacher_display" data-v="hide"${tOff}>${t.wu_hide}</button>
     </div>
   </div>
   <div class="row wrap">
@@ -476,10 +573,31 @@ class TimetableCardEditor extends HTMLElement {
       <button class="seg-o${room==='hide'?' on':''}" data-f="room_display" data-v="hide">${t.wu_hide}</button>
     </div>
   </div>
-</div>`;
+</div>
+<p class="foot">${t.wu_teacher_note}</p>
+
+<span class="sec">${t.sec_wu_homework}</span>
+<div class="box">
+  <div class="row${hwDis?' dis':''}">
+    <div><div class="rl">${t.wu_hw_title}</div><div class="rs">${hwSub}</div></div>
+    <ha-switch id="wu-hw" ${hwOn?'checked':''} ${hwDis?'disabled':''}></ha-switch>
+  </div>
+</div>
+<p class="foot">${t.wu_hw_note}</p>
+<button class="wu-off-btn" id="wu-off">
+  <span class="wu-off-label">${t.wu_adv_funcs_hold}</span>
+  <span class="wu-off-overlay"></span>
+</button>`;
 
     const s = this.shadowRoot;
     s.getElementById('wu-back').addEventListener('click', () => { this._editorPage = 'main'; this._render(); });
+    // Hold for one second. Removes the whole `webuntis:` block — the entity turns into a plain calendar.
+    const offBtn = s.getElementById('wu-off');
+    offBtn.addEventListener('pointerdown', () => {
+      clearTimeout(this._wuOffTimer);
+      this._wuOffTimer = setTimeout(() => this._disableWuAdvanced(ent.id), 1000);
+    });
+    ['pointerup', 'pointerleave', 'pointercancel'].forEach(evt => offBtn.addEventListener(evt, () => clearTimeout(this._wuOffTimer)));
     s.querySelectorAll('[data-f]').forEach(b => {
       b.addEventListener('click', () => {
         const ents = [...(this._config.entities || [])];
@@ -488,6 +606,66 @@ class TimetableCardEditor extends HTMLElement {
         this._renderWuAdvancedPage(i);
       });
     });
+
+    s.getElementById('wu-hw')?.addEventListener('change', e => {
+      const ents = [...(this._config.entities || [])];
+      ents[i] = { ...ents[i], show_homework: e.target.checked };
+      this._dispatch({ ...this._config, entities: ents });
+    });
+
+    if (startProbe) {
+      this._probeWuJson(ent.id).then(res => {
+        this._wuJson[ent.id] = res;
+        const idx = (this._config.entities || []).findIndex(e => e && e.id === ent.id);
+        const cur = idx >= 0 ? this._config.entities[idx] : null;
+        // no JSON in the descriptions → no teacher names and no subjects to match homework
+        if (res === 'none' && cur && cur.device_id && ((cur.teacher_display && cur.teacher_display !== 'hide') || cur.show_homework === true)) {
+          const ents = [...this._config.entities];
+          ents[idx] = { ...cur, teacher_display: 'hide', show_homework: false };
+          this._dispatch({ ...this._config, entities: ents });
+        }
+        const open = this._editorPage === 'wu-advanced' && (this._config.entities || [])[this._editorEntIndex]?.id === ent.id;
+        if (open) this._renderWuAdvancedPage(this._editorEntIndex);
+      });
+    }
+  }
+
+  _disableWuAdvanced(entityId) {
+    const ents = [...(this._config.entities || [])];
+    const idx = ents.findIndex(e => e && e.id === entityId);
+    if (idx < 0) return;
+    const rest = { ...ents[idx] };
+    TC_WU_KEYS.forEach(k => delete rest[k]);
+    delete this._wuJson[entityId];
+    ents[idx] = rest;
+    this._editorPage = 'main';
+    this._dispatch({ ...this._config, entities: ents });
+    this._render();
+  }
+
+  // Looks at up to 3 existing calendar events (no WebUntis look-ahead): does any description carry the lesson JSON?
+  //  'ok' → at least one does · 'none' → events found, none does · 'unknown' → no events / request failed
+  async _probeWuJson(entityId) {
+    if (!this._hass) return 'unknown';
+    const now = new Date();
+    const from = new Date(now); from.setDate(from.getDate() - 14); from.setHours(0, 0, 0, 0);
+    const to   = new Date(now); to.setDate(to.getDate() + 28);     to.setHours(23, 59, 59, 999);
+    let evs;
+    try {
+      const res = await this._hass.callApi('GET',
+        `calendars/${entityId}?start=${encodeURIComponent(from.toISOString())}&end=${encodeURIComponent(to.toISOString())}`);
+      evs = Array.isArray(res) ? res : [];
+    } catch {
+      return 'unknown';
+    }
+    const timed = evs
+      .filter(ev => ev && ev.start && ev.start.dateTime)
+      .sort((a, b) => new Date(a.start.dateTime) - new Date(b.start.dateTime));
+    if (!timed.length) return 'unknown';
+    const upcoming = timed.filter(ev => new Date(ev.start.dateTime) >= now);
+    const past     = timed.filter(ev => new Date(ev.start.dateTime) <  now).reverse();
+    const sample   = [...upcoming.slice(0, 3), ...past.slice(0, Math.max(0, 3 - upcoming.length))];
+    return sample.some(ev => tcLessonJson(ev.description)) ? 'ok' : 'none';
   }
 
   // ── Keywords ────────────────────────────────────────────────────
@@ -1045,6 +1223,14 @@ ha-switch{flex-shrink:0}
 .nav-hdr-sub{font-size:12px;color:var(--secondary-text-color);opacity:.7;margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .row.dis{opacity:.45}
 .row.dis ha-switch{pointer-events:none}
+.row.dis .seg{pointer-events:none}
+.wu-off-btn{position:relative;overflow:hidden;display:block;width:100%;margin-top:26px;padding:11px 16px;border-radius:10px;border:1px solid #F3C9C6;border:1px solid color-mix(in srgb,#FF3B30 27.5%,var(--card-background-color,#fff));background:#FFF3F2;background:color-mix(in srgb,#FF3B30 6%,var(--card-background-color,#fff));cursor:pointer;appearance:none;font-family:inherit;text-align:center;transition:transform 160ms cubic-bezier(0.23,1,0.32,1);-webkit-user-select:none;user-select:none;touch-action:none}
+.wu-off-btn:active{transform:scale(0.97)}
+.wu-off-label{position:relative;z-index:2;font-size:13.5px;font-weight:600;color:#FF3B30}
+.wu-off-overlay{position:absolute;inset:0;background:#FF3B30;z-index:1;clip-path:inset(0 100% 0 0);transition:clip-path 220ms cubic-bezier(0.23,1,0.32,1)}
+.wu-off-btn:active .wu-off-overlay{clip-path:inset(0 0 0 0);transition:clip-path 1000ms linear}
+.wu-off-btn:active .wu-off-label{color:#fff;transition:color 450ms ease 200ms}
+.foot{font-size:12px;line-height:1.45;color:var(--secondary-text-color);opacity:.75;margin:8px 6px 0}
 .row.wrap{flex-wrap:wrap}
 .row.wrap>.seg{margin-left:auto}
 .seg.seg3 .seg-o{padding:5px 10px}
@@ -1285,8 +1471,14 @@ class TimetableCard extends HTMLElement {
 
   setConfig(cfg) {
     if (cfg.entity && !cfg.entities) cfg = { ...cfg, entities: [cfg.entity] };
-    const changed = JSON.stringify(cfg.entities) !== JSON.stringify(this._config.entities);
-    const rangeChanged = cfg.dynamic_start !== this._config.dynamic_start || cfg.dynamic_count !== this._config.dynamic_count;
+    // Only the calendar set needs a refetch. Colours, `visible` and the WebUntis display options are applied
+    // at render time, so changing them keeps the loaded events and the shown week as they are.
+    const fetchSig = ents => JSON.stringify(tcNormalizeEntities(ents || []).map(e => [e.id, e.device_id || null]));
+    const visSig   = ents => JSON.stringify(tcNormalizeEntities(ents || []).map(e => tcEntityVisible(e)));
+    const changed    = fetchSig(cfg.entities) !== fetchSig(this._config.entities);
+    const visChanged = !changed && visSig(cfg.entities) !== visSig(this._config.entities);
+    // minimised configs omit unset keys (undefined) while the defaults hold null — compare them as equal
+    const rangeChanged = (cfg.dynamic_start ?? null) !== (this._config.dynamic_start ?? null) || (cfg.dynamic_count ?? null) !== (this._config.dynamic_count ?? null);
     this._config = { ...TC_DEFAULT, ...cfg };
     const newHome = this._computeHomeOffset();
     if (this._weekOffset === this._homeOffsetCache && this._weekOffset !== newHome) {
@@ -1294,8 +1486,9 @@ class TimetableCard extends HTMLElement {
       this._lastFetchKey = null;
     }
     this._homeOffsetCache = newHome;
-    if (changed) { this._events = []; this._lastFetchKey = null; if (this._hass) this._fetchEvents(); }
+    if (changed) { this._events = []; this._lastFetchKey = null; this._lastRenderedKey = null; this._lastEventsSig = null; if (this._hass) this._fetchEvents(); }
     else if (rangeChanged) { this._lastFetchKey = null; if (this._hass) this._fetchEvents(); }
+    if (visChanged && this._hass) this._checkWebuntisFetch(); // a calendar that just became visible may need its look-ahead
     this._reconvertWebuntis();
     this._setupRefresh();
     this._setupClock();
@@ -1319,6 +1512,7 @@ class TimetableCard extends HTMLElement {
   set hass(h) {
     const first = !this._hass;
     this._hass = h;
+    if (!first && this._hwTargets && this._hwTargets.length && this._hwSignature() !== this._hwSig) this._render(); // homework list changed
     if (first) {
       const lang = h?.locale?.language || h?.language || TC_STRINGS_FALLBACK;
       tcLoadStrings(lang).then(() => {
@@ -1477,7 +1671,7 @@ class TimetableCard extends HTMLElement {
         ents.map(e =>
           this._hass.callApi('GET',
             `calendars/${e.id}?start=${encodeURIComponent(monday.toISOString())}&end=${encodeURIComponent(end.toISOString())}`)
-          .then(res => (Array.isArray(res) ? res : []).map(ev => ({ ...ev, _entityId: e.id })))
+          .then(res => (Array.isArray(res) ? res : []).map(ev => this._nativeEvent(ev, e)))
           .catch(() => { failed = true; return []; })
         )
       );
@@ -1508,23 +1702,102 @@ class TimetableCard extends HTMLElement {
     this._checkWebuntisFetch();
   }
 
+  // ── Homework (WebUntis) ─────────────────────────────────────────────
+  _hwSensorId(deviceId) {
+    if (!this._hass) return null;
+    const cache = (this._hwSensors ||= {});
+    const hit = cache[deviceId];
+    if (hit && (hit.id ? this._hass.states?.[hit.id] : Date.now() - hit.at < 60_000)) return hit.id;
+    const id = tcFindHomeworkSensor(this._hass, deviceId);
+    cache[deviceId] = { id, at: Date.now() };
+    return id;
+  }
+  _hwSignature() {
+    return this._hwTargets.map(x => this._hass?.states?.[x.sid]?.last_updated || '').join('|');
+  }
+  // Reads the homework of every WebUntis calendar that has `show_homework` on.
+  _buildHomework() {
+    const map = new Map(), targets = [];
+    for (const ent of this._getEntities()) {
+      if (!ent.device_id || ent.show_homework !== true || !tcEntityVisible(ent)) continue;
+      const sid = this._hwSensorId(ent.device_id);
+      if (!sid) continue;
+      targets.push({ id: ent.id, sid });
+      const list = tcHomeworkList(this._hass, sid);
+      if (list.length) map.set(ent.id, list);
+    }
+    this._hw = map;
+    this._hwTargets = targets;
+    this._hwSig = this._hwSignature();
+  }
+  // Subject names of a lesson, lower-cased: short and long name of the subjects in the lesson JSON (look-ahead lessons carry
+  // the same data).
+  _lessonSubjects(ev) {
+    const subs = (ev._lesson && ev._lesson.subjects) || ev._wuSubjects;
+    const names = [];
+    if (Array.isArray(subs)) subs.forEach(sb => { if (sb) [sb.name, sb.long_name].forEach(n => { if (typeof n === 'string' && n.trim()) names.push(n.trim().toLowerCase()); }); });
+    return names;
+  }
+  // Homework texts that belong to this lesson: due on the lesson's day, subject equal to the lesson's subject.
+  _homeworkOf(ev) {
+    const list = this._hw && this._hw.get(ev._entityId);
+    if (!list || !ev.start || !ev.start.dateTime) return [];
+    const day = this._fmtISODate(new Date(ev.start.dateTime));
+    const names = this._lessonSubjects(ev);
+    if (!names.length) return [];
+    const out = [];
+    for (const h of list) if (h.due === day && names.includes(h.subject) && !out.includes(h.text)) out.push(h.text);
+    return out;
+  }
+
   // ── WebUntis supplemental fetch ─────────────────────────────────────
   _allEvents() {
-    const wu = [];
+    const native = this._events;
+    const extra  = [];
     for (const ent of this._getEntities()) {
       if (!ent.device_id) continue;
       const st = this._webuntisState[ent.id];
-      if (st?.events?.length) wu.push(...st.events);
+      if (!st?.events?.length) continue;
+      // The calendar entity is the source of truth: a day it already delivers is never filled from the
+      // look-ahead cache, so a lesson can not show up twice (cache and calendar refreshing at the same time).
+      const covered = new Set();
+      for (const ev of native) {
+        if (ev._entityId === ent.id && ev.start?.dateTime) covered.add(this._fmtISODate(new Date(ev.start.dateTime)));
+      }
+      for (const ev of st.events) {
+        if (!covered.has(this._fmtISODate(new Date(ev.start.dateTime)))) extra.push(ev);
+      }
     }
-    const all = wu.length ? [...this._events, ...wu] : this._events;
-    if (!this._calFilterActive()) return all;
-    const hidden = this._calFilterHiddenSet();
+    const all = extra.length ? [...native, ...extra] : native;
+    const hidden = new Set(this._getEntities().filter(e => !tcEntityVisible(e)).map(e => e.id)); // yaml `visible: false`
+    if (this._calFilterActive()) this._calFilterHiddenSet().forEach(id => hidden.add(id));
     return hidden.size ? all.filter(ev => !hidden.has(ev._entityId)) : all;
   }
 
+  // Calendar-entity event → card event. A WebUntis calendar can hold the lesson as JSON in the description:
+  // the teachers are read from it and the raw JSON is swapped for the lesson's own info text.
+  _nativeEvent(ev, ent) {
+    const out = { ...ev, _entityId: ent.id };
+    if (!ent.device_id) return out;
+    const parsed = tcLessonJson(ev.description);
+    if (!parsed) return out;
+    out._wuTeachers = parsed.teachers;
+    const l = parsed.lesson;
+    if (l && Array.isArray(l.subjects)) out._wuSubjects = l.subjects;
+    out.description = l ? [l.info, l.lstext, l.substText].filter(v => v && String(v).trim()).join(', ') : '';
+    return out;
+  }
+  _teacherOf(ev) {
+    if (typeof ev._teacher === 'string') return ev._teacher; // look-ahead lesson, already converted
+    if (!Array.isArray(ev._wuTeachers)) return '';
+    const ent = this._getEntities().find(e => e.id === ev._entityId);
+    return tcPickNames(ev._wuTeachers, tcTeacherPref(ent));
+  }
+
   // ── Calendar filter (selection lives in the browser's localStorage) ─
+  _visibleEntities() { return this._getEntities().filter(tcEntityVisible); }
   _calFilterActive() {
-    return this._config.show_calendar_filter === true && this._getEntities().length > 1;
+    return this._config.show_calendar_filter === true && this._visibleEntities().length > 1;
   }
   _calFilterKey() {
     return 'timetable-card:calendar-filter:' + this._getEntities().map(e => e.id).sort().join(',');
@@ -1554,7 +1827,7 @@ class TimetableCard extends HTMLElement {
     this._closeCalFilter();
     const t      = tcS(this._hass);
     const hidden = this._calFilterHiddenSet();
-    const items  = this._getEntities().map(ent => {
+    const items  = this._visibleEntities().map(ent => {
       const col = this._entityColor({ _entityId: ent.id }) || 'var(--primary-color,#03a9f4)';
       return `<label class="cf-item"><span class="cf-dot" style="background:${tcEsc(col)}"></span><span class="cf-name">${tcEsc(this._calLabel(ent))}</span><input type="checkbox" class="cf-chk" data-id="${tcEsc(ent.id)}"${hidden.has(ent.id) ? '' : ' checked'} /></label>`;
     }).join('');
@@ -1605,21 +1878,15 @@ class TimetableCard extends HTMLElement {
   _addDays(d, n) { const dt = new Date(d); dt.setDate(dt.getDate() + n); return dt; }
 
   _convertLesson(lesson, ent) {
-    const pick = (arr, pref) => {
-      if (pref === 'hide') return '';
-      if (!Array.isArray(arr) || !arr.length) return '';
-      const key = pref === 'long' ? 'long_name' : 'name';
-      return arr.map(x => (x && (x[key] || x.name)) || '').filter(Boolean).join(', ');
-    };
     const desc = [lesson.info, lesson.lstext, lesson.substText].filter(v => v && String(v).trim()).join(', ');
     return {
       start: { dateTime: lesson.start },
       end:   { dateTime: lesson.end },
       // the subject is the event title, so it can never be hidden
-      summary: pick(lesson.subjects, ent.subject_display === 'hide' ? 'short' : ent.subject_display),
-      location: pick(lesson.rooms, ent.room_display),
+      summary: tcPickNames(lesson.subjects, ent.subject_display === 'hide' ? 'short' : ent.subject_display),
+      location: tcPickNames(lesson.rooms, ent.room_display),
       description: desc,
-      _teacher: pick(lesson.teachers, ent.teacher_display),
+      _teacher: tcPickNames(lesson.teachers, tcTeacherPref(ent)),
       _lesson: lesson,
       _entityId: ent.id,
     };
@@ -1661,31 +1928,52 @@ class TimetableCard extends HTMLElement {
     }
   }
 
-  _webuntisGapInView(ent, st) {
+  // Days of the view (today or later) without any known event of this calendar.
+  _webuntisGapDays(ent, st) {
     const today = new Date(); today.setHours(0, 0, 0, 0);
     const days  = this._weekDays(tcS(this._hass));
     const known = [...this._events.filter(ev => ev._entityId === ent.id), ...st.events];
+    const gaps  = [];
     for (const day of days) {
       if (day.date < today) continue; // never look into the past
       const dayEnd = this._addDays(day.date, 1);
-      if (!known.some(ev => this._edt(ev, 'start') < dayEnd && this._edt(ev, 'end') > day.date)) return true;
+      if (!known.some(ev => this._edt(ev, 'start') < dayEnd && this._edt(ev, 'end') > day.date)) gaps.push(day.date);
     }
-    return false;
+    return gaps;
+  }
+
+  // Is any cached look-ahead lesson on screen right now (a day the calendar entity itself leaves empty)?
+  _webuntisShownInView(ent, st) {
+    if (!st || !st.events || !st.events.length) return false;
+    const view = new Set(this._weekDays(tcS(this._hass)).map(d => this._fmtISODate(d.date)));
+    const covered = new Set();
+    for (const ev of this._events) {
+      if (ev._entityId === ent.id && ev.start?.dateTime) covered.add(this._fmtISODate(new Date(ev.start.dateTime)));
+    }
+    return st.events.some(ev => {
+      const k = this._fmtISODate(new Date(ev.start.dateTime));
+      return view.has(k) && !covered.has(k);
+    });
   }
 
   async _checkWebuntisFetch() {
     if (!this._hass) return;
     const today = new Date(); today.setHours(0, 0, 0, 0);
     for (const ent of this._getEntities()) {
-      if (!ent.device_id) continue;
-      const st = (this._webuntisState[ent.id] ||= { events: [], coverageFrom: null, coverageEnd: null, loading: false, failed: false });
+      if (!ent.device_id || !tcEntityVisible(ent)) continue;
+      const st = (this._webuntisState[ent.id] ||= { events: [], coverageFrom: null, coverageEnd: null, loading: false, failed: false, empty: false });
       if (st.loading) continue;
 
-      if (!this._webuntisGapInView(ent, st)) continue;
+      let gaps = this._webuntisGapDays(ent, st);
+      if (!gaps.length) continue;
 
       const horizon = this._computeWebuntisHorizon();
       const lastNativeEnd = await this._scanWebuntisNativeCoverage(ent, horizon);
       if (lastNativeEnd === undefined) continue; // native scan failed this cycle — retry later
+      // The scan is async: meanwhile another check may have started the lookup (fast week navigation) or the view moved on.
+      if (st.loading) continue;
+      gaps = this._webuntisGapDays(ent, st);
+      if (!gaps.length) continue;
 
       if (lastNativeEnd && lastNativeEnd >= horizon) {
         if (st.events.length || st.coverageEnd) { st.events = []; st.coverageFrom = null; st.coverageEnd = null; }
@@ -1693,11 +1981,26 @@ class TimetableCard extends HTMLElement {
         continue;
       }
 
-      const neededStart = (lastNativeEnd && lastNativeEnd > today) ? lastNativeEnd : today;
+      // The look-ahead is only fetched when it is needed: an empty day of the view has to lie beyond what the
+      // calendar entity delivers. An empty day inside that range is just a free day and never asks WebUntis.
+      if (lastNativeEnd && !gaps.some(d => d >= lastNativeEnd)) continue;
+
+      // First day without data: the day after the calendar entity's last event — its last covered day is never queried again.
+      let neededStart = today;
+      if (lastNativeEnd && lastNativeEnd > today) {
+        neededStart = new Date(lastNativeEnd);
+        if (neededStart.getHours() || neededStart.getMinutes() || neededStart.getSeconds() || neededStart.getMilliseconds()) neededStart = this._addDays(neededStart, 1);
+        neededStart.setHours(0, 0, 0, 0);
+        if (neededStart > horizon) continue;
+      }
       const alreadyCovered = st.coverageFrom && st.coverageEnd
         && st.coverageFrom <= neededStart && st.coverageEnd >= horizon;
-      if (alreadyCovered) continue;
-      if (st.failed) continue;
+      if (alreadyCovered) {
+        // shown again after a while: bring it up to date
+        if (Date.now() - (st.syncedAt || 0) > TC_WEBUNTIS_STALE_MS) this._refreshWebuntisAnchor();
+        continue;
+      }
+      if (st.failed || st.empty) continue; // paused until a manual refresh
 
       st.loading = true;
       this._render();
@@ -1713,8 +2016,10 @@ class TimetableCard extends HTMLElement {
         }, undefined, undefined, true);
         const lessons = (result && result.response && result.response.lessons) || [];
         st.events = lessons.map(l => this._convertLesson(l, ent));
+        st.empty = lessons.length === 0;
         st.coverageFrom = neededStart;
         st.coverageEnd = horizon;
+        st.syncedAt = Date.now();
         st.failed = false;
       } catch (err) {
         st.failed = true;
@@ -1726,12 +2031,16 @@ class TimetableCard extends HTMLElement {
 
   async _refreshWebuntisAnchor(manual = false) {
     if (!this._hass) return;
-    const targets = this._getEntities().filter(e => e.device_id && this._webuntisState[e.id]?.coverageEnd && !this._webuntisState[e.id].loading);
+    // only while look-ahead lessons are actually on screen — a natively covered week never needs it
+    const targets = this._getEntities().filter(e => e.device_id && tcEntityVisible(e) && this._webuntisState[e.id]?.coverageEnd && !this._webuntisState[e.id].loading && this._webuntisShownInView(e, this._webuntisState[e.id]));
     if (!targets.length) return;
+    // automatic refreshes (timer, card shown again) ask WebUntis at most every TC_WEBUNTIS_STALE_MS; only the refresh button forces it
+    const due = manual ? targets : targets.filter(e => Date.now() - (this._webuntisState[e.id].syncedAt || 0) >= TC_WEBUNTIS_STALE_MS);
+    if (!due.length) return;
     const anchorStart = this._mondayOf(new Date());
     const anchorEnd   = this._addDays(anchorStart, 20);
     const anchorEndEx = this._addDays(anchorEnd, 1);
-    for (const ent of targets) {
+    for (const ent of due) {
       const st = this._webuntisState[ent.id];
       st.loading = true;
       this._render();
@@ -1751,6 +2060,7 @@ class TimetableCard extends HTMLElement {
           const s = new Date(e2.start.dateTime);
           return !(s >= anchorStart && s < anchorEndEx);
         }).concat(converted);
+        st.syncedAt = Date.now();
         st.failed = false;
       } catch (err) {
         st.failed = true;
@@ -1862,10 +2172,19 @@ class TimetableCard extends HTMLElement {
     const kwRule = this._matchKw(ev);
     return this._kwColor(kwRule) || this._entityColor(ev) || null;
   }
-  // Start / end as minutes since midnight; an event running past midnight ends at 24:00.
-  _evSpan(ev) {
+  _evSpan(ev, day) {
     const s = this._edt(ev, 'start'), e = this._edt(ev, 'end');
     if (!s || !e) return null;
+    if (day) {
+      const dayStart = new Date(day);
+      dayStart.setHours(0, 0, 0, 0);
+      const dayEnd = new Date(dayStart);
+      dayEnd.setDate(dayEnd.getDate() + 1);
+      if (s >= dayEnd || (e <= dayStart && s < dayStart)) return null;
+      const from = s < dayStart ? dayStart : s;
+      const to   = e >= dayEnd ? dayEnd : e;
+      return { sm: this._toMin(from), em: to >= dayEnd ? 1440 : this._toMin(to) };
+    }
     const sm = this._toMin(s);
     let em = this._toMin(e);
     if (em <= sm && e.toDateString() !== s.toDateString()) em = 1440;
@@ -1876,11 +2195,13 @@ class TimetableCard extends HTMLElement {
   //  · event_based: every event start / end
   //  · fixed interval: only multiples of that interval
   //  · custom time window: limited to (and spanning exactly) that window
-  _boundaries(timedEvs, range) {
+  _boundaries(timedEvs, range, days) {
     const iv    = this._config.time_interval;
     const fixed = !!iv && iv !== 'event_based';
     const step  = fixed ? (parseInt(iv) || 15) : 0;
-    const spans = timedEvs.map(ev => this._evSpan(ev)).filter(Boolean);
+    const spans = days
+      ? days.flatMap(day => timedEvs.map(ev => this._evSpan(ev, day.date)).filter(Boolean))
+      : timedEvs.map(ev => this._evSpan(ev)).filter(Boolean);
     if (!spans.length) return [];
 
     if (range) {
@@ -1968,15 +2289,17 @@ class TimetableCard extends HTMLElement {
     }
 
     let rows = '';
-    if (timeStr) rows += `<div class="pd-row"><div class="pd-ico">🕐</div><div class="pd-val">${timeStr}</div></div>`;
+    if (timeStr) rows += `<div class="pd-row"><div class="pd-ico"><ha-icon icon="mdi:clock-outline" style="--mdc-icon-size:18px"></ha-icon></div><div class="pd-val">${timeStr}</div></div>`;
     const teacher = (ev._teacher || '').trim();
-    if (teacher) rows += `<div class="pd-row"><div class="pd-ico">👨‍🏫</div><div class="pd-val">${tcEsc(teacher)}</div></div>`;
-    if (loc)     rows += `<div class="pd-row"><div class="pd-ico">📍</div><div class="pd-val">${tcEsc(loc)}</div></div>`;
-    if (rawDesc) rows += `<div class="pd-row"><div class="pd-ico">📝</div><div class="pd-val pd-desc">${tcEsc(rawDesc)}</div></div>`;
+    if (teacher) rows += `<div class="pd-row"><div class="pd-ico"><ha-icon icon="mdi:human-male-board" style="--mdc-icon-size:18px"></ha-icon></div><div class="pd-val">${tcEsc(teacher)}</div></div>`;
+    if (loc)     rows += `<div class="pd-row"><div class="pd-ico"><ha-icon icon="mdi:map-marker-radius" style="--mdc-icon-size:18px"></ha-icon></div><div class="pd-val">${tcEsc(loc)}</div></div>`;
+    if (rawDesc) rows += `<div class="pd-row"><div class="pd-ico"><ha-icon icon="mdi:text-box-edit-outline" style="--mdc-icon-size:18px"></ha-icon></div><div class="pd-val pd-desc">${tcEsc(rawDesc)}</div></div>`;
+    const hw = Array.isArray(ev._homework) ? ev._homework.filter(x => typeof x === 'string' && x.trim()) : [];
+    if (hw.length) rows += `<div class="pd-row"><div class="pd-ico"><ha-icon icon="mdi:notebook-edit-outline" style="--mdc-icon-size:18px"></ha-icon></div><div class="pd-val pd-hw">${hw.map(x => `<div class="pd-hw-i">${tcEsc(x)}</div>`).join('')}</div></div>`;
     if (calId && this._config.show_calendar !== false) {
       const calEnt   = this._getEntities().find(en => en.id === calId);
       const calLabel = this._calLabel(calEnt) || calId;
-      rows += `<div class="pd-row"><div class="pd-ico">📅</div><div class="pd-val pd-cal">${tcEsc(calLabel)}</div></div>`;
+      rows += `<div class="pd-row"><div class="pd-ico"><ha-icon icon="mdi:calendar" style="--mdc-icon-size:18px"></ha-icon></div><div class="pd-val pd-cal">${tcEsc(calLabel)}</div></div>`;
     }
 
     const overlay = document.createElement('div');
@@ -1997,6 +2320,9 @@ class TimetableCard extends HTMLElement {
         .pd-val{font-size:13.5px;color:var(--primary-text-color);line-height:1.5;word-break:break-word}
         .pd-desc{color:var(--secondary-text-color);font-size:13px;white-space:pre-wrap}
         .pd-cal{color:var(--secondary-text-color);font-size:12px;opacity:.65}
+        .pd-hw{font-size:13px;white-space:pre-wrap}
+        .pd-hw-i+.pd-hw-i{margin-top:4px}
+        .pd-ico ha-icon{display:block;color:var(--secondary-text-color)}
         .tc-popup-close{position:absolute;top:12px;right:12px;background:var(--secondary-background-color,rgba(120,120,128,.15));border:none;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--secondary-text-color);transition:background .15s}
         .tc-popup-close:hover{background:var(--secondary-background-color,rgba(120,120,128,.25))}
         .tc-popup-wrap{position:relative}
@@ -2128,7 +2454,8 @@ textarea.tc-ce-plain{resize:none;min-height:64px;line-height:1.4;font-family:inh
 
     this._createDialogSelect = null;
     const calWrap = overlay.querySelector('#ce-cal-wrap');
-    const calEnts = this._getEntities();
+    const visEnts = this._visibleEntities();
+    const calEnts = visEnts.length ? visEnts : this._getEntities();
     const sel = document.createElement('select');
     sel.className = 'tc-ce-select tc-ce-cal-select';
     sel.innerHTML = calEnts.length
@@ -2231,6 +2558,7 @@ textarea.tc-ce-plain{resize:none;min-height:64px;line-height:1.4;font-family:inh
   }
 
   _render() {
+    this._buildHomework();
     const newHome = this._computeHomeOffset();
     if (this._weekOffset === this._homeOffsetCache && this._weekOffset !== newHome) {
       this._weekOffset = newHome;
@@ -2255,13 +2583,13 @@ textarea.tc-ce-plain{resize:none;min-height:64px;line-height:1.4;font-family:inh
     const hasAllDay = allDayEvs.length > 0;
 
     const range  = tcTimeRange(this._config);
-    const bounds = this._boundaries(timedEvs, range);
+    const bounds = this._boundaries(timedEvs, range, days);
     const minT   = range ? range.start : (bounds.length ? bounds[0] : 480);
     const maxT   = range ? range.end   : (bounds.length ? bounds[bounds.length-1] : 960);
     const bodyH  = bounds.length ? (maxT - minT) * ppm + PADDING_TOP + PADDING_BOT : 200;
 
     const byDay = days.map(day =>
-      timedEvs.filter(ev => { const s = this._edt(ev,'start'); return s && s.toDateString()===day.date.toDateString(); })
+      timedEvs.filter(ev => this._evSpan(ev, day.date))
     );
 
     const isCurrentWeek = now >= monday && now <= rangeEnd;
@@ -2315,7 +2643,7 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px);position
 .d-date{font-size:20px;font-weight:200;color:var(--primary-text-color);line-height:1.3;letter-spacing:-.5px;margin-top:1px}
 .day-hdr.today .d-name{color:var(--primary-color,#03a9f4)}
 .day-hdr.today .d-date{font-weight:700;color:var(--primary-color,#03a9f4)}
-.tt-scroll{overflow-y:auto}
+.tt-scroll{overflow-y:auto;overflow-x:hidden}
 .tt-body{display:flex;position:relative;height:${bodyH}px}
 .t-col{width:${TIME_W}px;flex-shrink:0;position:relative}
 .t-col.l{border-right:1px solid var(--divider-color,rgba(0,0,0,.07))}
@@ -2336,6 +2664,9 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px);position
 .ev-loc{font-size:${fs.event_location}px;color:var(--secondary-text-color);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;line-height:1.2;opacity:.68}
 .ev-notes{font-size:${fs.event_description}px;color:var(--secondary-text-color);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px;line-height:1.2;opacity:.38;font-style:italic}
 .ev-desc-ind{position:absolute;bottom:3px;right:6px;font-size:10px;line-height:1;opacity:.55;color:var(--primary-text-color);pointer-events:none}
+.ev-hw-ind{position:absolute;bottom:2px;right:5px;font-size:10px;width:1.2em;height:1.2em;line-height:1;display:flex;align-items:center;justify-content:center;opacity:.55;color:var(--primary-text-color);pointer-events:none}
+.ev-hw-ind ha-icon{display:flex;width:100%;height:100%;--mdc-icon-size:1.2em;align-items:center;justify-content:center}
+.ev-hw-ind.shift{right:20px}
 .now-badge{position:absolute;top:4px;right:5px;width:5px;height:5px;border-radius:50%;background:var(--primary-color,#03a9f4);animation:pulse 2s ease-in-out infinite;flex-shrink:0}
 @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.45;transform:scale(.6)}}
 .rng-hint{position:absolute;left:50%;transform:translateX(-50%);z-index:8;font-size:8px;font-weight:700;line-height:1;padding:2px 6px;border-radius:8px;background:var(--secondary-background-color,rgba(120,120,128,.14));color:var(--secondary-text-color);pointer-events:none;letter-spacing:.1px}
@@ -2470,7 +2801,7 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px);position
       const visibleEvs = rawEvs.filter(ev => !this._matchKw(ev)?.hidden);
       // custom time window: only events overlapping it take part in the layout
       const inWindow   = range
-        ? visibleEvs.filter(ev => { const sp = this._evSpan(ev); return sp && sp.em > range.start && sp.sm < range.end; })
+        ? visibleEvs.filter(ev => { const sp = this._evSpan(ev, day.date); return sp && sp.em > range.start && sp.sm < range.end; })
         : visibleEvs;
       const layout     = this._layoutDay(inWindow);
 
@@ -2478,7 +2809,7 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px);position
       if (range && this._config.show_out_of_range_hint === true) {
         let before = 0, after = 0;
         visibleEvs.forEach(ev => {
-          const sp = this._evSpan(ev);
+          const sp = this._evSpan(ev, day.date);
           if (!sp) return;
           if (sp.em <= range.start) before++;
           else if (sp.sm >= range.end) after++;
@@ -2488,7 +2819,7 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px);position
       }
 
       const evBlocks = layout.map(({ ev, col, total }) => {
-        const span = this._evSpan(ev);
+        const span = this._evSpan(ev, day.date);
         if (!span) return '';
         const sm = Math.max(span.sm, minT), em = Math.min(span.em, maxT); // clipped to the shown window
         const top    = (sm - minT) * ppm + PADDING_TOP;
@@ -2505,10 +2836,11 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px);position
         const displayTitle = renamed || ev.summary || t.no_title;
         const loc      = (ev.location || '').trim();
         const rawNotes = (ev.description || '').replace(/<[^>]+>/g,'').trim();
-        const teacher  = (ev._teacher || '').trim();
+        const teacher  = this._teacherOf(ev).trim();
         const showLoc  = this._config.show_location !== false && loc;
         const showNote = this._config.show_notes !== false && rawNotes && height > (teacher ? 72 : 58);
         const showDescInd = this._config.show_description_indicator === true && !!rawNotes;
+        const hwTexts = this._homeworkOf(ev);
         let sty = `top:${top}px;height:${height}px;left:${colLeft};width:${colW};`;
         if (rgb) {
           const { r, g, b } = rgb;
@@ -2522,7 +2854,7 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px);position
         } else if (isCurr) {
           sty += `background:rgba(var(--rgb-primary-color,3,169,244),.13);border-left-color:var(--primary-color,#03a9f4);`;
         }
-        const evData = JSON.stringify({ s: ev.start, e: ev.end, sum: ev.summary, loc: ev.location, desc: ev.description, eid: ev._entityId, tch: ev._teacher });
+        const evData = JSON.stringify({ s: ev.start, e: ev.end, sum: ev.summary, loc: ev.location, desc: ev.description, eid: ev._entityId, tch: teacher, ...(hwTexts.length ? { hw: hwTexts } : {}) });
         return `<div class="ev${isCurr?' now':''}" style="${sty}" data-ev="${tcEsc(evData)}">
           ${isCurr?`<div class="now-badge"></div>`:''}
           <div class="ev-title">${tcEsc(displayTitle)}</div>
@@ -2530,6 +2862,7 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px);position
           ${showLoc?`<div class="ev-loc">📍 ${tcEsc(loc)}</div>`:''}
           ${showNote?`<div class="ev-notes">${tcEsc(rawNotes.substring(0,80))}${rawNotes.length>80?'…':''}</div>`:''}
           ${showDescInd?`<div class="ev-desc-ind">ⓘ</div>`:''}
+          ${hwTexts.length?`<div class="ev-hw-ind${showDescInd?' shift':''}"><ha-icon icon="mdi:notebook-edit-outline"></ha-icon></div>`:''}
         </div>`;
       }).join('');
 
@@ -2574,7 +2907,11 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px);position
       this._lastFetchKey = null; this._fetchEvents(); this._render();
     });
     s.getElementById('ref-btn')?.addEventListener('click', () => {
-      Object.values(this._webuntisState).forEach(st => { st.failed = false; });
+      // a manual refresh lifts the look-ahead stop: after a failed lookup and after a lookup that found no lessons
+      Object.values(this._webuntisState).forEach(st => {
+        st.failed = false;
+        if (st.empty) { st.empty = false; st.coverageFrom = null; st.coverageEnd = null; }
+      });
       this._lastFetchKey = null; this._fetchEvents(true); this._refreshWebuntisAnchor(true);
     });
     s.getElementById('ce-fab-btn')?.addEventListener('click', () => this._openCreateEventDialog());
@@ -2589,7 +2926,7 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px);position
           const raw = JSON.parse(el.dataset.ev);
           const synthetic = {
             start: raw.s, end: raw.e, summary: raw.sum,
-            location: raw.loc, description: raw.desc, _entityId: raw.eid, _teacher: raw.tch
+            location: raw.loc, description: raw.desc, _entityId: raw.eid, _teacher: raw.tch, _homework: raw.hw
           };
           this._openPopup(synthetic);
         } catch {}

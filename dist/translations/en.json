@@ -172,5 +172,15 @@
   "fs_sample_desc": "Bring calculator",
   "wu_teacher_title": "Teacher Name",
   "wu_teacher_sub": "How teachers are shown",
-  "wu_hide": "Hide"
+  "wu_hide": "Hide",
+  "wu_teacher_checking": "Checking calendar data…",
+  "wu_unavail": "Unavailable",
+  "wu_teacher_note": "Teacher names are read from the calendar description. To show them, turn on “JSON” as the calendar description in your WebUntis integration settings.",
+  "wu_adv_funcs_title": "Advanced WebUntis Features",
+  "wu_adv_funcs_hold": "Hold to turn off Advanced WebUntis Features",
+  "sec_wu_homework": "Homework",
+  "wu_hw_title": "Show Homework",
+  "wu_hw_sub": "Shown in the lesson pop-up",
+  "wu_hw_unavail": "Unavailable — no homework sensor found for this device",
+  "wu_hw_note": "Homework appears in the pop-up of the lesson on its due date, matched by subject. To show it, turn on “JSON” as the calendar description in your WebUntis integration settings."
 }
