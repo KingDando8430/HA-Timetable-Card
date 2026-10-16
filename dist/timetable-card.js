@@ -591,7 +591,7 @@ class TimetableCardEditor extends HTMLElement {
 
     const s = this.shadowRoot;
     s.getElementById('wu-back').addEventListener('click', () => { this._editorPage = 'main'; this._render(); });
-    // Hold for one second. Only removes `device_id` — the entity turns into a plain calendar.
+    // Hold for one second. Removes the whole `webuntis:` block — the entity turns into a plain calendar.
     const offBtn = s.getElementById('wu-off');
     offBtn.addEventListener('pointerdown', () => {
       clearTimeout(this._wuOffTimer);
@@ -634,9 +634,10 @@ class TimetableCardEditor extends HTMLElement {
     const ents = [...(this._config.entities || [])];
     const idx = ents.findIndex(e => e && e.id === entityId);
     if (idx < 0) return;
-    const { device_id, ...rest } = ents[idx];
-    ents[idx] = rest;
+    const rest = { ...ents[idx] };
+    TC_WU_KEYS.forEach(k => delete rest[k]);
     delete this._wuJson[entityId];
+    ents[idx] = rest;
     this._editorPage = 'main';
     this._dispatch({ ...this._config, entities: ents });
     this._render();
