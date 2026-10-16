@@ -2277,17 +2277,17 @@ class TimetableCard extends HTMLElement {
     }
 
     let rows = '';
-    if (timeStr) rows += `<div class="pd-row"><div class="pd-ico">🕐</div><div class="pd-val">${timeStr}</div></div>`;
+    if (timeStr) rows += `<div class="pd-row"><div class="pd-ico"><ha-icon icon="mdi:clock-outline" style="--mdc-icon-size:18px"></ha-icon></div><div class="pd-val">${timeStr}</div></div>`;
     const teacher = (ev._teacher || '').trim();
-    if (teacher) rows += `<div class="pd-row"><div class="pd-ico">👨‍🏫</div><div class="pd-val">${tcEsc(teacher)}</div></div>`;
-    if (loc)     rows += `<div class="pd-row"><div class="pd-ico">📍</div><div class="pd-val">${tcEsc(loc)}</div></div>`;
-    if (rawDesc) rows += `<div class="pd-row"><div class="pd-ico">📝</div><div class="pd-val pd-desc">${tcEsc(rawDesc)}</div></div>`;
+    if (teacher) rows += `<div class="pd-row"><div class="pd-ico"><ha-icon icon="mdi:human-male-board" style="--mdc-icon-size:18px"></ha-icon></div><div class="pd-val">${tcEsc(teacher)}</div></div>`;
+    if (loc)     rows += `<div class="pd-row"><div class="pd-ico"><ha-icon icon="mdi:map-marker-radius" style="--mdc-icon-size:18px"></ha-icon></div><div class="pd-val">${tcEsc(loc)}</div></div>`;
+    if (rawDesc) rows += `<div class="pd-row"><div class="pd-ico"><ha-icon icon="mdi:text-box-edit-outline" style="--mdc-icon-size:18px"></ha-icon></div><div class="pd-val pd-desc">${tcEsc(rawDesc)}</div></div>`;
     const hw = Array.isArray(ev._homework) ? ev._homework.filter(x => typeof x === 'string' && x.trim()) : [];
     if (hw.length) rows += `<div class="pd-row"><div class="pd-ico"><ha-icon icon="mdi:notebook-edit-outline" style="--mdc-icon-size:18px"></ha-icon></div><div class="pd-val pd-hw">${hw.map(x => `<div class="pd-hw-i">${tcEsc(x)}</div>`).join('')}</div></div>`;
     if (calId && this._config.show_calendar !== false) {
       const calEnt   = this._getEntities().find(en => en.id === calId);
       const calLabel = this._calLabel(calEnt) || calId;
-      rows += `<div class="pd-row"><div class="pd-ico">📅</div><div class="pd-val pd-cal">${tcEsc(calLabel)}</div></div>`;
+      rows += `<div class="pd-row"><div class="pd-ico"><ha-icon icon="mdi:calendar" style="--mdc-icon-size:18px"></ha-icon></div><div class="pd-val pd-cal">${tcEsc(calLabel)}</div></div>`;
     }
 
     const overlay = document.createElement('div');
