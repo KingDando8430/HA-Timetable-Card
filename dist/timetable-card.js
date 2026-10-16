@@ -2172,10 +2172,19 @@ class TimetableCard extends HTMLElement {
     const kwRule = this._matchKw(ev);
     return this._kwColor(kwRule) || this._entityColor(ev) || null;
   }
-  // Start / end as minutes since midnight; an event running past midnight ends at 24:00.
-  _evSpan(ev) {
+  _evSpan(ev, day) {
     const s = this._edt(ev, 'start'), e = this._edt(ev, 'end');
     if (!s || !e) return null;
+    if (day) {
+      const dayStart = new Date(day);
+      dayStart.setHours(0, 0, 0, 0);
+      const dayEnd = new Date(dayStart);
+      dayEnd.setDate(dayEnd.getDate() + 1);
+      if (s >= dayEnd || (e <= dayStart && s < dayStart)) return null;
+      const from = s < dayStart ? dayStart : s;
+      const to   = e >= dayEnd ? dayEnd : e;
+      return { sm: this._toMin(from), em: to >= dayEnd ? 1440 : this._toMin(to) };
+    }
     const sm = this._toMin(s);
     let em = this._toMin(e);
     if (em <= sm && e.toDateString() !== s.toDateString()) em = 1440;
@@ -2186,11 +2195,13 @@ class TimetableCard extends HTMLElement {
   //  · event_based: every event start / end
   //  · fixed interval: only multiples of that interval
   //  · custom time window: limited to (and spanning exactly) that window
-  _boundaries(timedEvs, range) {
+  _boundaries(timedEvs, range, days) {
     const iv    = this._config.time_interval;
     const fixed = !!iv && iv !== 'event_based';
     const step  = fixed ? (parseInt(iv) || 15) : 0;
-    const spans = timedEvs.map(ev => this._evSpan(ev)).filter(Boolean);
+    const spans = days
+      ? days.flatMap(day => timedEvs.map(ev => this._evSpan(ev, day.date)).filter(Boolean))
+      : timedEvs.map(ev => this._evSpan(ev)).filter(Boolean);
     if (!spans.length) return [];
 
     if (range) {
@@ -2572,13 +2583,13 @@ textarea.tc-ce-plain{resize:none;min-height:64px;line-height:1.4;font-family:inh
     const hasAllDay = allDayEvs.length > 0;
 
     const range  = tcTimeRange(this._config);
-    const bounds = this._boundaries(timedEvs, range);
+    const bounds = this._boundaries(timedEvs, range, days);
     const minT   = range ? range.start : (bounds.length ? bounds[0] : 480);
     const maxT   = range ? range.end   : (bounds.length ? bounds[bounds.length-1] : 960);
     const bodyH  = bounds.length ? (maxT - minT) * ppm + PADDING_TOP + PADDING_BOT : 200;
 
     const byDay = days.map(day =>
-      timedEvs.filter(ev => { const s = this._edt(ev,'start'); return s && s.toDateString()===day.date.toDateString(); })
+      timedEvs.filter(ev => this._evSpan(ev, day.date))
     );
 
     const isCurrentWeek = now >= monday && now <= rangeEnd;
@@ -2790,7 +2801,7 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px);position
       const visibleEvs = rawEvs.filter(ev => !this._matchKw(ev)?.hidden);
       // custom time window: only events overlapping it take part in the layout
       const inWindow   = range
-        ? visibleEvs.filter(ev => { const sp = this._evSpan(ev); return sp && sp.em > range.start && sp.sm < range.end; })
+        ? visibleEvs.filter(ev => { const sp = this._evSpan(ev, day.date); return sp && sp.em > range.start && sp.sm < range.end; })
         : visibleEvs;
       const layout     = this._layoutDay(inWindow);
 
@@ -2798,7 +2809,7 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px);position
       if (range && this._config.show_out_of_range_hint === true) {
         let before = 0, after = 0;
         visibleEvs.forEach(ev => {
-          const sp = this._evSpan(ev);
+          const sp = this._evSpan(ev, day.date);
           if (!sp) return;
           if (sp.em <= range.start) before++;
           else if (sp.sm >= range.end) after++;
@@ -2808,7 +2819,7 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px);position
       }
 
       const evBlocks = layout.map(({ ev, col, total }) => {
-        const span = this._evSpan(ev);
+        const span = this._evSpan(ev, day.date);
         if (!span) return '';
         const sm = Math.max(span.sm, minT), em = Math.min(span.em, maxT); // clipped to the shown window
         const top    = (sm - minT) * ppm + PADDING_TOP;
