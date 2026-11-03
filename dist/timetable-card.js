@@ -2,10 +2,10 @@
 // Home Assistant Timetable Card
 // Author: KingDando8430
 // https://github.com/KingDando8430/HA-Timetable-Card
-// Version: 1.6.0
+// Version: 1.6.1
 // ═══════════════════════════════════════════════════════════════════
 
-const TC_VERSION = '1.6.0';
+const TC_VERSION = '1.6.1';
 
 window.customCards = window.customCards || [];
 window.customCards.push({
@@ -2233,7 +2233,42 @@ class TimetableCard extends HTMLElement {
     spans.forEach(({ sm, em }) => { set.add(sm); set.add(em); });
     return Array.from(set).sort((a, b) => a - b);
   }
+ 
+    const pos  = new Map(this._getEntities().map((e, i) => [e.id, i]));
+    const rank = ev => (pos.has(ev._entityId) ? pos.get(ev._entityId) : pos.size);
+    const items = [];
+    for (const ev of evs) {
+      const s = this._edt(ev,'start'), e = this._edt(ev,'end');
+      if (s && e) items.push({ ev, s, e });
+    }
+    items.sort((a, b) => (a.s - b.s) || (a.e - b.e));
+    const groups = [];
+    let cur = null, curEnd = null;
+    for (const it of items) {
+      if (cur && it.s < curEnd) { cur.push(it); if (it.e > curEnd) curEnd = it.e; }
+      else { cur = [it]; groups.push(cur); curEnd = it.e; }
+    }
+    const out = [];
+    for (const group of groups) {
+      const placed = [];
+      let used = 0;
+      const order = [...group].sort((a, b) => (rank(a.ev) - rank(b.ev)) || (a.s - b.s) || (a.e - b.e));
+      for (const it of order) {
+        const over = placed.filter(p => p.it.s < it.e && p.it.e > it.s);
+        let col = 0;
+        // never left of an overlapping event of a calendar that comes earlier in the config
+        for (const p of over) if (rank(p.it.ev) < rank(it.ev)) col = Math.max(col, p.col + 1);
+        while (over.some(p => p.col === col)) col++;
+        placed.push({ it, col });
+        if (col + 1 > used) used = col + 1;
+      }
+      for (const p of placed) out.push({ ev: p.it.ev, col: p.col, total: used });
+    }
+    return out;
+  }
   _layoutDay(evs) {
+    // with a single calendar there is no order to keep: the plain start-time layout stays
+    if (this._visibleEntities().length > 1) return this._layoutDayByEntity(evs);
     const sorted = [...evs].sort((a, b) => (this._edt(a,'start')||0) - (this._edt(b,'start')||0));
     const cols = [], result = [];
     for (const ev of sorted) {
@@ -2577,7 +2612,8 @@ textarea.tc-ce-plain{resize:none;min-height:64px;line-height:1.4;font-family:inh
     const ppm      = parseFloat(this._config.px_per_min) || 1.4;
     const fs       = tcFontSizes(this._config.fontsize);
 
-    const evSrc      = this._allEvents();
+    // events hidden by a keyword rule are dropped here, so they neither stretch the time axis nor open an all-day row
+    const evSrc      = this._allEvents().filter(ev => !this._matchKw(ev)?.hidden);
     const allDayEvs = evSrc.filter(ev =>  this._isAllDay(ev));
     const timedEvs  = evSrc.filter(ev => !this._isAllDay(ev));
     const hasAllDay = allDayEvs.length > 0;
@@ -2798,7 +2834,7 @@ ha-card{overflow:hidden;border-radius:var(--ha-card-border-radius,16px);position
       const gLines  = bounds.map(m => `<div class="g-line" style="top:${(m-minT)*ppm+PADDING_TOP}px"></div>`).join('');
       const nowLine = (isToday && showNow)
         ? `<div class="now-line" style="top:${nowTop}px"><div class="now-dot"></div></div>` : '';
-      const visibleEvs = rawEvs.filter(ev => !this._matchKw(ev)?.hidden);
+      const visibleEvs = rawEvs; // hidden events are already filtered out above
       // custom time window: only events overlapping it take part in the layout
       const inWindow   = range
         ? visibleEvs.filter(ev => { const sp = this._evSpan(ev, day.date); return sp && sp.em > range.start && sp.sm < range.end; })
