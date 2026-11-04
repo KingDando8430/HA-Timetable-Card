@@ -2,10 +2,10 @@
 // Home Assistant Timetable Card
 // Author: KingDando8430
 // https://github.com/KingDando8430/HA-Timetable-Card
-// Version: 1.6.1
+// Version: 1.6.2
 // ═══════════════════════════════════════════════════════════════════
 
-const TC_VERSION = '1.6.1';
+const TC_VERSION = '1.6.2';
 
 window.customCards = window.customCards || [];
 window.customCards.push({
@@ -2233,7 +2233,7 @@ class TimetableCard extends HTMLElement {
     spans.forEach(({ sm, em }) => { set.add(sm); set.add(em); });
     return Array.from(set).sort((a, b) => a - b);
   }
- 
+  _layoutDayByEntity(evs) {
     const pos  = new Map(this._getEntities().map((e, i) => [e.id, i]));
     const rank = ev => (pos.has(ev._entityId) ? pos.get(ev._entityId) : pos.size);
     const items = [];
