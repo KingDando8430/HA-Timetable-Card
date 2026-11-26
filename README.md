@@ -37,7 +37,7 @@ A custom Home Assistant Lovelace card that displays calendar events in a weekly 
 * 🕓 **Custom time window** — show only a chosen time range (e.g. 08:00–16:00) and optionally get a small `+n` hint for events outside of it
 
 ---
-
+<!-- ha-marketplace:exclude-start -->
 ## Installation
 
 ### Marketplace (recommended)
@@ -68,7 +68,7 @@ A custom Home Assistant Lovelace card that displays calendar events in a weekly 
 3. Reload the browser
 
 ---
-
+<!-- ha-marketplace:exclude-end -->
 ## Configuration
 
 Add the card via the visual editor or use the code editor.
@@ -214,7 +214,7 @@ keywords:
 > Timetable Card v1.1.0
 
 ---
-
+<!-- ha-marketplace:exclude-start -->
 ## File Structure
 
 ```
@@ -228,7 +228,7 @@ timetable-card/
 ```
 
 ---
-
+<!-- ha-marketplace:exclude-end -->
 ## Works Great With
 
 [WebUntis Integration](https://github.com/JonasJoKuJonas/homeassistant-WebUntis) by [@JonasJoKuJonas](https://github.com/JonasJoKuJonas)
